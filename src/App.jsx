@@ -7,30 +7,208 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString();
 
-
 const DEFAULT_SUBJECTS = [
-  {
-    id: 1,
-    name: "Mathematics",
-    present: 17,
-    absent: 7,
-    benchmark: 75,
-  },
-  {
-    id: 2,
-    name: "Physics",
-    present: 23,
-    absent: 5,
-    benchmark: 80,
-  },
-  {
-    id: 3,
-    name: "C++ Programming",
-    present: 17,
-    absent: 8,
-    benchmark: 50,
-  },
+  { id: 1, name: "Mathematics", present: 17, absent: 7, benchmark: 75 },
+  { id: 2, name: "Physics", present: 23, absent: 5, benchmark: 80 },
+  { id: 3, name: "C++ Programming", present: 17, absent: 8, benchmark: 50 },
 ];
+
+const DEFAULT_SETTINGS = {
+  studentName: "",
+  defaultBenchmark: 75,
+  warningThreshold: 75,
+  theme: "dark",
+};
+
+// =========================================================
+// SYLLABUS PARSER (IET DAVV B.Tech I-year, scheme wef July 2024)
+//
+//  1. Strip the repeating page header so units spanning pages stay intact.
+//  2. Every "UNIT-I" starts the content block of one course
+//     (the scheme table on page 2 has no "Unit" text, so it is ignored).
+//  3. Blocks are assigned to courses by order in the document, because some
+//     course headers are printed AFTER their content and one code differs
+//     (R2SES3 vs 2RCES3).
+//  4. Workshop Practice has no units, so it is built from its trade-shop list.
+// =========================================================
+
+// Courses in the order their detail pages appear in the PDF.
+const COURSES = [
+  { semester: 1, code: "1RABS1", name: "Applied Mathematics-I" },
+  { semester: 1, code: "1RABS2", name: "Applied Chemistry & Environment Science" },
+  { semester: 1, code: "1RMES3", name: "General Mechanical Engineering" },
+  { semester: 1, code: "1RTES4", name: "Basic Electronics" },
+  { semester: 1, code: "1RMES5", name: "Workshop Practice", noUnits: true },
+  { semester: 1, code: "1RAHS6", name: "Technical English" },
+  { semester: 1, code: "1RAHS7", name: "Design Thinking" },
+  { semester: 2, code: "2RABS1", name: "Applied Mathematics-II" },
+  { semester: 2, code: "2RABS2", name: "Applied Physics" },
+  { semester: 2, code: "2RCES3", name: "Computer Programming" },
+  { semester: 2, code: "2REES4", name: "Basic Electrical Engineering" },
+  { semester: 2, code: "2RMES5", name: "Engineering Graphics and Design" },
+  { semester: 2, code: "2RAHS6", name: "Humanities" },
+];
+
+const PAGE_HEADER =
+  /Institute of Engineering\s*&\s*Technology,\s*Devi Ahilya University,\s*Indore,\s*\(M\.P\.\),\s*India\.\s*\(Scheme Effective from July 2024\)\s*\d*/gi;
+
+const STOP_WORDS = [
+  "Course Outcome",
+  "BOOKS RECOMMENDED",
+  "Books Recommended",
+  "Text/Reference Books",
+  "List of Experiments",
+  "List of Practical",
+  "CO. No.",
+  "CO.No.",
+  "Course Learning Objective",
+  "Course Objective",
+  "Devi Ahilya University, Indore, India",
+];
+
+const UNIT_REGEX = /\b(?:UNIT|Unit)\s*[-–—]?\s*(I{1,3}|IV|V)\b/g;
+
+function normalizeText(text) {
+  return text.replace(PAGE_HEADER, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanTopic(text) {
+  return text
+    .replace(/^[•●▪◦*\-–—:,.\s]+/, "")
+    .replace(/^\d+[.)]\s*/, "")
+    .replace(/[\s.,;:]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitUnitTopics(text) {
+  // Split on ";", on " - " / " – " separators, and on sentence ends
+  // (but not "i.e. Pp").
+  const parts = text
+    .split(/;|\s[-–—]\s|(?<!\.[a-z])\.\s+(?=[A-Z])/)
+    .map(cleanTopic)
+    .filter((t) => t.length > 2);
+
+  return parts.length ? parts : [cleanTopic(text)].filter(Boolean);
+}
+
+function cutAtStopWords(text) {
+  let end = text.length;
+  for (const word of STOP_WORDS) {
+    const i = text.indexOf(word);
+    if (i !== -1 && i < end) end = i;
+  }
+  return text.slice(0, end);
+}
+
+function parseUnits(blockText, code) {
+  const matches = [...blockText.matchAll(UNIT_REGEX)];
+
+  return matches
+    .map((m, i) => {
+      const start = m.index + m[0].length;
+      const end = i + 1 < matches.length ? matches[i + 1].index : blockText.length;
+      const content = cutAtStopWords(blockText.slice(start, end));
+      const unitId = `${code}-u${m[1]}`;
+
+      return {
+        id: unitId,
+        name: `Unit ${m[1]}`,
+        topics: splitUnitTopics(content).map((name, k) => ({
+          id: `${unitId}-t${k}`,
+          name,
+          completed: false,
+        })),
+      };
+    })
+    .filter((u) => u.topics.length > 0);
+}
+
+function parseWorkshop(text, course) {
+  const shops = [];
+  const re =
+    /Introduction of and practice work on the (Fitting|Carpentry|Welding|Foundry|Machine|Plumbing)/g;
+
+  for (const m of text.matchAll(re)) {
+    const name = `${m[1]} shop`;
+    if (!shops.includes(name)) shops.push(name);
+  }
+
+  if (shops.length === 0) return null;
+
+  const unitId = `${course.code}-uShops`;
+
+  return {
+    id: course.code,
+    code: course.code,
+    name: course.name,
+    units: [
+      {
+        id: unitId,
+        name: "Trade Shops",
+        topics: shops.map((name, k) => ({
+          id: `${unitId}-t${k}`,
+          name,
+          completed: false,
+        })),
+      },
+    ],
+  };
+}
+
+function parseWholeSyllabus(rawText) {
+  const text = normalizeText(rawText);
+  const warnings = [];
+
+  const starts = [...text.matchAll(/\b(?:UNIT|Unit)\s*[-–—]?\s*I\b/g)].map(
+    (m) => m.index
+  );
+
+  const blocks = starts.map((s, i) =>
+    text.slice(s, i + 1 < starts.length ? starts[i + 1] : text.length)
+  );
+
+  const unitCourses = COURSES.filter((c) => !c.noUnits);
+
+  if (blocks.length !== unitCourses.length) {
+    warnings.push(
+      `Expected ${unitCourses.length} subjects with units but found ${blocks.length}. Some subjects may be missing or misnamed.`
+    );
+  }
+
+  const syllabus = { semester1: [], semester2: [] };
+  let blockIndex = 0;
+
+  for (const course of COURSES) {
+    let subject = null;
+
+    if (course.noUnits) {
+      subject = parseWorkshop(text, course);
+    } else if (blockIndex < blocks.length) {
+      const units = parseUnits(blocks[blockIndex++], course.code);
+      if (units.length) {
+        subject = {
+          id: course.code,
+          code: course.code,
+          name: course.name,
+          units,
+        };
+      }
+    }
+
+    if (subject) {
+      syllabus[course.semester === 1 ? "semester1" : "semester2"].push(subject);
+    } else {
+      warnings.push(`Could not read ${course.name}.`);
+    }
+  }
+
+  return { syllabus, warnings };
+}
+
+// =========================================================
+// APP
+// =========================================================
 
 function App() {
   const [page, setPage] = useState("dashboard");
@@ -42,27 +220,8 @@ function App() {
 
   /*
    * Syllabus structure:
-   *
-   * {
-   *   semester1: [
-   *     {
-   *       id,
-   *       name,
-   *       code,
-   *       units: [
-   *         {
-   *           id,
-   *           name,
-   *           topics: [
-   *             { id, name, completed }
-   *           ]
-   *         }
-   *       ]
-   *     }
-   *   ],
-   *
-   *   semester2: [...]
-   * }
+   * { semester1: [{ id, name, code, units: [{ id, name, topics: [{ id, name, completed }] }] }],
+   *   semester2: [...] }
    */
   const [syllabus, setSyllabus] = useState(() => {
     const saved = localStorage.getItem("studytrack-full-syllabus");
@@ -73,13 +232,9 @@ function App() {
   const [newName, setNewName] = useState("");
   const [newBenchmark, setNewBenchmark] = useState(75);
 
-  const [selectedSyllabusSubject, setSelectedSyllabusSubject] =
-    useState(null);
-
+  const [selectedSyllabusSubject, setSelectedSyllabusSubject] = useState(null);
   const [expandedUnits, setExpandedUnits] = useState({});
-
   const [newTopic, setNewTopic] = useState("");
-
   const [uploadingPdf, setUploadingPdf] = useState(false);
 
   const DAYS = [
@@ -109,45 +264,25 @@ function App() {
 
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem("studytrack-settings");
-    return saved
-      ? JSON.parse(saved)
-      : {
-          studentName: "",
-          defaultBenchmark: 75,
-          warningThreshold: 75,
-          theme: "dark",
-        };
+    return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
   });
 
   const [importingBackup, setImportingBackup] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(
-      "studytrack-subjects",
-      JSON.stringify(subjects)
-    );
+    localStorage.setItem("studytrack-subjects", JSON.stringify(subjects));
   }, [subjects]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "studytrack-full-syllabus",
-      JSON.stringify(syllabus)
-    );
+    localStorage.setItem("studytrack-full-syllabus", JSON.stringify(syllabus));
   }, [syllabus]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "studytrack-timetable",
-      JSON.stringify(timetable)
-    );
+    localStorage.setItem("studytrack-timetable", JSON.stringify(timetable));
   }, [timetable]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "studytrack-settings",
-      JSON.stringify(settings)
-    );
-
+    localStorage.setItem("studytrack-settings", JSON.stringify(settings));
     document.documentElement.dataset.studytrackTheme = settings.theme;
   }, [settings]);
 
@@ -157,7 +292,6 @@ function App() {
 
   function addSubject() {
     const name = newName.trim();
-
     if (!name) return;
 
     const newSubject = {
@@ -169,7 +303,6 @@ function App() {
     };
 
     setSubjects((prev) => [...prev, newSubject]);
-
     setNewName("");
     setNewBenchmark(75);
     setShowAdd(false);
@@ -182,14 +315,8 @@ function App() {
 
         return {
           ...subject,
-          present:
-            type === "present"
-              ? subject.present + 1
-              : subject.present,
-          absent:
-            type === "absent"
-              ? subject.absent + 1
-              : subject.absent,
+          present: type === "present" ? subject.present + 1 : subject.present,
+          absent: type === "absent" ? subject.absent + 1 : subject.absent,
         };
       })
     );
@@ -201,10 +328,7 @@ function App() {
         subject.id === id
           ? {
               ...subject,
-              benchmark: Math.min(
-                100,
-                Math.max(0, Number(value))
-              ),
+              benchmark: Math.min(100, Math.max(0, Number(value))),
             }
           : subject
       )
@@ -212,24 +336,18 @@ function App() {
   }
 
   function deleteSubject(id) {
-    setSubjects((prev) =>
-      prev.filter((subject) => subject.id !== id)
-    );
+    setSubjects((prev) => prev.filter((subject) => subject.id !== id));
   }
 
   function getPercentage(subject) {
     const total = subject.present + subject.absent;
-
     if (total === 0) return 0;
-
     return Math.round((subject.present / total) * 100);
   }
 
   function getClassesNeeded(subject) {
     const percentage = getPercentage(subject);
-
     if (percentage >= subject.benchmark) return 0;
-
     if (subject.benchmark >= 100) return Infinity;
 
     const P = subject.present;
@@ -241,9 +359,7 @@ function App() {
 
   function getClassesCanMiss(subject) {
     const percentage = getPercentage(subject);
-
     if (percentage < subject.benchmark) return 0;
-
     if (subject.benchmark <= 0) return Infinity;
 
     const P = subject.present;
@@ -263,12 +379,11 @@ function App() {
     });
 
     if (total === 0) return 0;
-
     return Math.round((present / total) * 100);
   }
 
   // =========================================================
-  // PDF SYLLABUS PARSER
+  // PDF SYLLABUS IMPORT
   // =========================================================
 
   async function extractPdfText(file) {
@@ -292,20 +407,19 @@ function App() {
       const pages = [];
 
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-        const page = await pdf.getPage(pageNumber);
-        const content = await page.getTextContent();
+        const pdfPage = await pdf.getPage(pageNumber);
+        const content = await pdfPage.getTextContent();
 
-        const text = content.items
-          .map((item) => item?.str || "")
-          .join(" ");
-
+        const text = content.items.map((item) => item?.str || "").join(" ");
         pages.push(text);
       }
 
       const fullText = pages.join("\n").trim();
 
       if (!fullText) {
-        throw new Error("PDF opened successfully, but no selectable text was found.");
+        throw new Error(
+          "PDF opened successfully, but no selectable text was found."
+        );
       }
 
       return fullText;
@@ -317,262 +431,8 @@ function App() {
     }
   }
 
-  function normalizeText(text) {
-    return text
-      .replace(/\r/g, "\n")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
-  /*
-   * These are the actual subjects appearing in your
-   * IET DAVV first-year syllabus.
-   */
-  const COURSE_DEFINITIONS = [
-  // Semester I
-  {
-    semester: "Semester I",
-    code: "1RABS1",
-    name: "Applied Mathematics-I",
-  },
-  {
-    semester: "Semester I",
-    code: "1RABS2",
-    name: "Applied Chemistry & Environment Science",
-  },
-  {
-    semester: "Semester I",
-    code: "1RMES3",
-    name: "General Mechanical Engineering",
-  },
-  {
-    semester: "Semester I",
-    code: "1RTES4",
-    name: "Basic Electronics",
-  },
-  {
-    semester: "Semester I",
-    code: "1RMES5",
-    name: "Workshop Practice",
-  },
-  {
-    semester: "Semester I",
-    code: "1RAHS6",
-    name: "Technical English",
-  },
-  {
-    semester: "Semester I",
-    code: "1RAHS7",
-    name: "Design Thinking",
-  },
-
-  // Semester II
-  {
-    semester: "Semester II",
-    code: "2RABS1",
-    name: "Applied Mathematics-II",
-  },
-  {
-    semester: "Semester II",
-    code: "2RABS2",
-    name: "Applied Physics",
-  },
-  {
-    semester: "Semester II",
-    code: "2RCES3",
-    name: "Computer Programming",
-  },
-  {
-    semester: "Semester II",
-    code: "2REES4",
-    name: "Basic Electrical Engineering",
-  },
-  {
-    semester: "Semester II",
-    code: "2RMES5",
-    name: "Engineering Graphics and Design",
-  },
-  {
-    semester: "Semester II",
-    code: "2RAHS6",
-    name: "Humanities",
-  },
-];
-
-  function findCoursePositions(text) {
-    const positions = [];
-
-    COURSE_DEFINITIONS.forEach((course) => {
-      const index = text.indexOf(course.code);
-
-      if (index !== -1) {
-        positions.push({
-          ...course,
-          position: index,
-        });
-      }
-    });
-
-    return positions.sort(
-      (a, b) => a.position - b.position
-    );
-  }
-
-  function cleanTopic(text) {
-    return text
-      .replace(/^[•●▪◦*-]\s*/, "")
-      .replace(/^\d+[\.\)]\s*/, "")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function splitUnitTopics(text) {
-    /*
-     * Most units in this syllabus use semicolons to
-     * separate individual topics.
-     *
-     * If semicolons aren't present, keep the unit
-     * description as one topic rather than inventing
-     * content.
-     */
-    let parts = text
-      .split(";")
-      .map(cleanTopic)
-      .filter(Boolean);
-
-    if (parts.length === 1) {
-      parts = text
-        .split(/\.\s+(?=[A-Z])/)
-        .map(cleanTopic)
-        .filter(Boolean);
-    }
-
-    if (parts.length === 0) {
-      return [cleanTopic(text)];
-    }
-
-    return parts;
-  }
-
-  function parseUnits(courseText) {
-    const unitRegex =
-      /(?:UNIT|Unit)\s*[-–—]?\s*(I|II|III|IV|V)\b/gi;
-
-    const matches = [
-      ...courseText.matchAll(unitRegex),
-    ];
-
-    const units = [];
-
-    for (let i = 0; i < matches.length; i++) {
-      const match = matches[i];
-
-      const unitNumber = match[1].toUpperCase();
-
-      const start = match.index + match[0].length;
-
-      const end =
-        i + 1 < matches.length
-          ? matches[i + 1].index
-          : courseText.length;
-
-      let unitContent = courseText
-        .slice(start, end)
-        .trim();
-
-      /*
-       * Remove everything after sections that are
-       * clearly not syllabus content.
-       */
-      const stopWords = [
-        "Course Outcomes",
-        "Course Outcome",
-        "BOOKS RECOMMENDED",
-        "Books Recommended",
-        "List of Experiments",
-        "List of Practical",
-        "CO. No.",
-      ];
-
-      stopWords.forEach((word) => {
-        const index = unitContent.indexOf(word);
-
-        if (index !== -1) {
-          unitContent = unitContent.slice(0, index);
-        }
-      });
-
-      const topics = splitUnitTopics(unitContent)
-        .map((topic, index) => ({
-          id: `${Date.now()}-${i}-${index}-${Math.random()}`,
-          name: topic,
-          completed: false,
-        }))
-        .filter((topic) => topic.name.length > 2);
-
-      units.push({
-        id: `${Date.now()}-unit-${i}`,
-        name: `Unit ${unitNumber}`,
-        topics,
-      });
-    }
-
-    return units;
-  }
-
-  function parseWholeSyllabus(text) {
-    const normalized = normalizeText(text);
-
-    const coursePositions =
-      findCoursePositions(normalized);
-
-    const semesters = {
-      1: [],
-      2: [],
-    };
-
-    for (let i = 0; i < coursePositions.length; i++) {
-      const course = coursePositions[i];
-
-      const start = course.position;
-
-      const end =
-        i + 1 < coursePositions.length
-          ? coursePositions[i + 1].position
-          : normalized.length;
-
-      const courseText = normalized.slice(
-        start,
-        end
-      );
-
-      const units = parseUnits(courseText);
-
-      /*
-       * Only add a subject if actual units were found.
-       */
-      if (units.length > 0) {
-        const semesterKey = course.semester === "Semester I" ? 1 : 2;
-
-        semesters[semesterKey].push({
-          id: `${course.code}-${course.semester}`,
-          code: course.code,
-          name: course.name,
-          units,
-        });
-      }
-    }
-
-    return {
-      semester1: semesters[1],
-      semester2: semesters[2],
-    };
-  }
-
   async function handleWholePdfUpload(event) {
     const file = event.target.files?.[0];
-
     if (!file) return;
 
     if (file.type !== "application/pdf") {
@@ -584,65 +444,46 @@ function App() {
 
     try {
       const text = await extractPdfText(file);
+      const { syllabus: parsed, warnings } = parseWholeSyllabus(text);
 
-      const parsed = parseWholeSyllabus(text);
-
-      const totalSubjects =
-        parsed.semester1.length +
-        parsed.semester2.length;
-
-      const totalUnits =
-        parsed.semester1.reduce(
-          (total, subject) =>
-            total + subject.units.length,
-          0
-        ) +
-        parsed.semester2.reduce(
-          (total, subject) =>
-            total + subject.units.length,
-          0
-        );
+      const allSubjects = [...parsed.semester1, ...parsed.semester2];
+      const totalSubjects = allSubjects.length;
+      const totalUnits = allSubjects.reduce(
+        (total, subject) => total + subject.units.length,
+        0
+      );
 
       if (totalSubjects === 0) {
         alert(
           "No syllabus subjects were detected. Please make sure this is the IET DAVV syllabus PDF."
         );
-
         setUploadingPdf(false);
+        event.target.value = "";
         return;
       }
 
       const replace = window.confirm(
-        `Detected ${totalSubjects} subjects and ${totalUnits} units.\n\n` +
-          `Press OK to import the syllabus.\n` +
-          `Your current imported syllabus will be replaced.`
+        `Detected ${totalSubjects} subjects and ${totalUnits} units.` +
+          (warnings.length
+            ? `\n\nWarnings:\n- ${warnings.join("\n- ")}`
+            : "") +
+          `\n\nPress OK to import the syllabus.\nYour current imported syllabus will be replaced.`
       );
 
       if (replace) {
         setSyllabus(parsed);
-
         setSelectedSyllabusSubject(null);
-
         setExpandedUnits({});
+        alert(
+          `Syllabus imported successfully!\n\n${totalSubjects} subjects\n${totalUnits} units`
+        );
       }
-
-      alert(
-        `Syllabus imported successfully!\n\n` +
-          `${totalSubjects} subjects\n` +
-          `${totalUnits} units`
-      );
     } catch (error) {
       console.error("PDF IMPORT ERROR:", error);
-
-      alert(
-        `Could not read the PDF.\n\n${
-          error?.message || String(error)
-        }`
-      );
+      alert(`Could not read the PDF.\n\n${error?.message || String(error)}`);
     }
 
     setUploadingPdf(false);
-
     event.target.value = "";
   }
 
@@ -701,9 +542,7 @@ function App() {
 
     setTimetable((prev) =>
       editingTimetableId
-        ? prev.map((item) =>
-            item.id === editingTimetableId ? entry : item
-          )
+        ? prev.map((item) => (item.id === editingTimetableId ? entry : item))
         : [...prev, entry]
     );
 
@@ -712,9 +551,7 @@ function App() {
   }
 
   function deleteTimetableEntry(id) {
-    setTimetable((prev) =>
-      prev.filter((entry) => entry.id !== id)
-    );
+    setTimetable((prev) => prev.filter((entry) => entry.id !== id));
   }
 
   function getDayEntries(day) {
@@ -728,19 +565,11 @@ function App() {
   // =========================================================
 
   function getSubjectProgress(subject) {
-    const topics = subject.units.flatMap(
-      (unit) => unit.topics
-    );
-
+    const topics = subject.units.flatMap((unit) => unit.topics);
     if (topics.length === 0) return 0;
 
-    const completed = topics.filter(
-      (topic) => topic.completed
-    ).length;
-
-    return Math.round(
-      (completed / topics.length) * 100
-    );
+    const completed = topics.filter((topic) => topic.completed).length;
+    return Math.round((completed / topics.length) * 100);
   }
 
   function getOverallSyllabusProgress() {
@@ -757,61 +586,42 @@ function App() {
 
     if (topics.length === 0) return 0;
 
-    const completed = topics.filter(
-      (topic) => topic.completed
-    ).length;
-
-    return Math.round(
-      (completed / topics.length) * 100
-    );
+    const completed = topics.filter((topic) => topic.completed).length;
+    return Math.round((completed / topics.length) * 100);
   }
 
-  function toggleTopic(
-    subjectId,
-    unitId,
-    topicId
-  ) {
+  function updateSubjectInSyllabus(subjectId, updater) {
     setSyllabus((prev) => {
       if (!prev) return prev;
 
-      const updateSemester = (subjects) =>
-        subjects.map((subject) => {
-          if (subject.id !== subjectId) {
-            return subject;
-          }
-
-          return {
-            ...subject,
-            units: subject.units.map((unit) => {
-              if (unit.id !== unitId) {
-                return unit;
-              }
-
-              return {
-                ...unit,
-                topics: unit.topics.map((topic) =>
-                  topic.id === topicId
-                    ? {
-                        ...topic,
-                        completed:
-                          !topic.completed,
-                      }
-                    : topic
-                ),
-              };
-            }),
-          };
-        });
+      const updateSemester = (list) =>
+        list.map((subject) =>
+          subject.id === subjectId ? updater(subject) : subject
+        );
 
       return {
-        semester1: updateSemester(
-          prev.semester1 || []
-        ),
-        semester2: updateSemester(
-          prev.semester2 || []
-        ),
+        semester1: updateSemester(prev.semester1 || []),
+        semester2: updateSemester(prev.semester2 || []),
       };
     });
+  }
+
+  function toggleTopic(subjectId, unitId, topicId) {
+    updateSubjectInSyllabus(subjectId, (subject) => ({
+      ...subject,
+      units: subject.units.map((unit) =>
+        unit.id !== unitId
+          ? unit
+          : {
+              ...unit,
+              topics: unit.topics.map((topic) =>
+                topic.id === topicId
+                  ? { ...topic, completed: !topic.completed }
+                  : topic
+              ),
+            }
+      ),
+    }));
   }
 
   function toggleUnit(unitId) {
@@ -823,50 +633,26 @@ function App() {
 
   function addManualTopic(subjectId, unitId) {
     const name = newTopic.trim();
-
     if (!name) return;
 
-    setSyllabus((prev) => {
-      if (!prev) return prev;
-
-      function updateSemester(subjects) {
-        return subjects.map((subject) => {
-          if (subject.id !== subjectId) {
-            return subject;
-          }
-
-          return {
-            ...subject,
-            units: subject.units.map((unit) => {
-              if (unit.id !== unitId) {
-                return unit;
-              }
-
-              return {
-                ...unit,
-                topics: [
-                  ...unit.topics,
-                  {
-                    id: `${Date.now()}-${Math.random()}`,
-                    name,
-                    completed: false,
-                  },
-                ],
-              };
-            }),
-          };
-        });
-      }
-
-      return {
-        semester1: updateSemester(
-          prev.semester1 || []
-        ),
-        semester2: updateSemester(
-          prev.semester2 || []
-        ),
-      };
-    });
+    updateSubjectInSyllabus(subjectId, (subject) => ({
+      ...subject,
+      units: subject.units.map((unit) =>
+        unit.id !== unitId
+          ? unit
+          : {
+              ...unit,
+              topics: [
+                ...unit.topics,
+                {
+                  id: `${Date.now()}-${Math.random()}`,
+                  name,
+                  completed: false,
+                },
+              ],
+            }
+      ),
+    }));
 
     setNewTopic("");
   }
@@ -881,25 +667,19 @@ function App() {
         <div className="page-header">
           <div>
             <h1>Good morning 👋</h1>
-            <p>
-              Here is your academic overview.
-            </p>
+            <p>Here is your academic overview.</p>
           </div>
         </div>
 
         <div className="stats-grid">
           <div className="stat-card">
             <span>Overall Attendance</span>
-            <strong>
-              {overallAttendance()}%
-            </strong>
+            <strong>{overallAttendance()}%</strong>
           </div>
 
           <div className="stat-card">
             <span>Syllabus Progress</span>
-            <strong>
-              {getOverallSyllabusProgress()}%
-            </strong>
+            <strong>{getOverallSyllabusProgress()}%</strong>
           </div>
 
           <div className="stat-card">
@@ -912,9 +692,7 @@ function App() {
             <strong>
               {
                 subjects.filter(
-                  (subject) =>
-                    getPercentage(subject) <
-                    subject.benchmark
+                  (subject) => getPercentage(subject) < subject.benchmark
                 ).length
               }
             </strong>
@@ -928,17 +706,10 @@ function App() {
 
           <div className="dashboard-subjects">
             {subjects.map((subject) => (
-              <div
-                className="dashboard-subject"
-                key={subject.id}
-              >
+              <div className="dashboard-subject" key={subject.id}>
                 <div>
                   <strong>{subject.name}</strong>
-
-                  <span>
-                    Attendance:{" "}
-                    {getPercentage(subject)}%
-                  </span>
+                  <span>Attendance: {getPercentage(subject)}%</span>
                 </div>
 
                 <div className="dashboard-attendance">
@@ -962,16 +733,12 @@ function App() {
         <div className="page-header">
           <div>
             <h1>Attendance</h1>
-            <p>
-              Track attendance for every subject.
-            </p>
+            <p>Track attendance for every subject.</p>
           </div>
 
           <button
             className="primary-button"
-            onClick={() =>
-              setShowAdd(!showAdd)
-            }
+            onClick={() => setShowAdd(!showAdd)}
           >
             + Add Subject
           </button>
@@ -985,9 +752,7 @@ function App() {
               type="text"
               placeholder="Subject name"
               value={newName}
-              onChange={(e) =>
-                setNewName(e.target.value)
-              }
+              onChange={(e) => setNewName(e.target.value)}
             />
 
             <input
@@ -996,15 +761,10 @@ function App() {
               max="100"
               placeholder="Benchmark %"
               value={newBenchmark}
-              onChange={(e) =>
-                setNewBenchmark(e.target.value)
-              }
+              onChange={(e) => setNewBenchmark(e.target.value)}
             />
 
-            <button
-              className="primary-button"
-              onClick={addSubject}
-            >
+            <button className="primary-button" onClick={addSubject}>
               Add Subject
             </button>
           </div>
@@ -1012,56 +772,37 @@ function App() {
 
         <div className="attendance-list">
           {subjects.map((subject) => {
-            const percentage =
-              getPercentage(subject);
-
-            const needed =
-              getClassesNeeded(subject);
-
-            const canMiss =
-              getClassesCanMiss(subject);
+            const percentage = getPercentage(subject);
+            const needed = getClassesNeeded(subject);
+            const canMiss = getClassesCanMiss(subject);
 
             return (
-              <div
-                className="attendance-card"
-                key={subject.id}
-              >
+              <div className="attendance-card" key={subject.id}>
                 <div className="attendance-card-header">
                   <div>
                     <h2>{subject.name}</h2>
-
-                    <span>
-                      {subject.present +
-                        subject.absent}{" "}
-                      total classes
-                    </span>
+                    <span>{subject.present + subject.absent} total classes</span>
                   </div>
 
                   <button
                     className="danger-text"
-                    onClick={() =>
-                      deleteSubject(subject.id)
-                    }
+                    onClick={() => deleteSubject(subject.id)}
                   >
                     Delete
                   </button>
                 </div>
 
                 <div className="attendance-main">
-                  <div className="big-percentage">
-                    {percentage}%
-                  </div>
+                  <div className="big-percentage">{percentage}%</div>
 
                   <p
                     className={
-                      percentage >=
-                      subject.benchmark
+                      percentage >= subject.benchmark
                         ? "good-text"
                         : "danger-text"
                     }
                   >
-                    {percentage >=
-                    subject.benchmark
+                    {percentage >= subject.benchmark
                       ? "Above your benchmark"
                       : "Below your benchmark"}
                   </p>
@@ -1075,14 +816,9 @@ function App() {
                       type="number"
                       min="0"
                       max="100"
-                      value={
-                        subject.benchmark
-                      }
+                      value={subject.benchmark}
                       onChange={(e) =>
-                        updateBenchmark(
-                          subject.id,
-                          e.target.value
-                        )
+                        updateBenchmark(subject.id, e.target.value)
                       }
                     />
                     %
@@ -1090,108 +826,54 @@ function App() {
                 </div>
 
                 <div className="large-progress">
-                  <div
-                    style={{
-                      width: `${Math.min(
-                        percentage,
-                        100
-                      )}%`,
-                    }}
-                  />
+                  <div style={{ width: `${Math.min(percentage, 100)}%` }} />
                 </div>
 
                 <div className="attendance-numbers">
                   <span>
-                    Present:{" "}
-                    <strong>
-                      {subject.present}
-                    </strong>
+                    Present: <strong>{subject.present}</strong>
                   </span>
-
                   <span>
-                    Absent:{" "}
-                    <strong>
-                      {subject.absent}
-                    </strong>
+                    Absent: <strong>{subject.absent}</strong>
                   </span>
-
                   <span>
-                    Total:{" "}
-                    <strong>
-                      {subject.present +
-                        subject.absent}
-                    </strong>
+                    Total: <strong>{subject.present + subject.absent}</strong>
                   </span>
                 </div>
 
                 <div className="attendance-actions">
                   <button
                     className="present-button"
-                    onClick={() =>
-                      markAttendance(
-                        subject.id,
-                        "present"
-                      )
-                    }
+                    onClick={() => markAttendance(subject.id, "present")}
                   >
                     + Present
                   </button>
 
                   <button
                     className="absent-button"
-                    onClick={() =>
-                      markAttendance(
-                        subject.id,
-                        "absent"
-                      )
-                    }
+                    onClick={() => markAttendance(subject.id, "absent")}
                   >
                     + Absent
                   </button>
                 </div>
 
                 <div className="attendance-message">
-                  {percentage <
-                  subject.benchmark ? (
+                  {percentage < subject.benchmark ? (
                     needed === Infinity ? (
-                      <span>
-                        100% attendance is
-                        required.
-                      </span>
+                      <span>100% attendance is required.</span>
                     ) : (
                       <span>
-                        Attend the next{" "}
-                        <strong>
-                          {needed}
-                        </strong>{" "}
-                        classes to reach{" "}
-                        <strong>
-                          {subject.benchmark}%
-                        </strong>
-                        .
+                        Attend the next <strong>{needed}</strong> classes to
+                        reach <strong>{subject.benchmark}%</strong>.
                       </span>
                     )
-                  ) : canMiss ===
-                    Infinity ? (
-                    <span>
-                      You can miss any number
-                      of classes.
-                    </span>
+                  ) : canMiss === Infinity ? (
+                    <span>You can miss any number of classes.</span>
                   ) : (
                     <span>
-                      You can miss{" "}
-                      <strong>
-                        {canMiss}
-                      </strong>{" "}
-                      class
-                      {canMiss !== 1
-                        ? "es"
-                        : ""}{" "}
-                      and stay at{" "}
-                      <strong>
-                        {subject.benchmark}%
-                      </strong>
-                      .
+                      You can miss <strong>{canMiss}</strong> class
+                      {canMiss !== 1 ? "es" : ""} and stay at{" "}
+                      <strong>{subject.benchmark}%</strong>.
                     </span>
                   )}
                 </div>
@@ -1207,27 +889,36 @@ function App() {
   // SYLLABUS PAGE
   // =========================================================
 
+  function renderSemesterSubjects(list) {
+    return (
+      <div className="syllabus-subject-grid">
+        {(list || []).map((subject) => (
+          <button
+            key={subject.id}
+            className={`syllabus-subject-card ${
+              selectedSyllabusSubject === subject.id ? "selected" : ""
+            }`}
+            onClick={() => setSelectedSyllabusSubject(subject.id)}
+          >
+            <strong>{subject.name}</strong>
+            <span>{getSubjectProgress(subject)}%</span>
+
+            <div className="small-progress">
+              <div style={{ width: `${getSubjectProgress(subject)}%` }} />
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   function Syllabus() {
     const allSubjects = syllabus
-      ? [
-          ...(syllabus.semester1 || []).map(
-            (subject) => ({
-              ...subject,
-              semester: 1,
-            })
-          ),
-          ...(syllabus.semester2 || []).map(
-            (subject) => ({
-              ...subject,
-              semester: 2,
-            })
-          ),
-        ]
+      ? [...(syllabus.semester1 || []), ...(syllabus.semester2 || [])]
       : [];
 
     const selectedSubject = allSubjects.find(
-      (subject) =>
-        subject.id === selectedSyllabusSubject
+      (subject) => subject.id === selectedSyllabusSubject
     );
 
     return (
@@ -1235,15 +926,11 @@ function App() {
         <div className="page-header">
           <div>
             <h1>Syllabus</h1>
-            <p>
-              Track your complete college syllabus.
-            </p>
+            <p>Track your complete college syllabus.</p>
           </div>
 
           <label className="pdf-upload-button">
-            {uploadingPdf
-              ? "Reading PDF..."
-              : "📄 Upload Complete Syllabus"}
+            {uploadingPdf ? "Reading PDF..." : "📄 Upload Complete Syllabus"}
 
             <input
               type="file"
@@ -1256,22 +943,18 @@ function App() {
 
         {!syllabus ? (
           <div className="panel empty-state">
-            <div className="empty-icon">
-              📚
-            </div>
+            <div className="empty-icon">📚</div>
 
             <h2>Upload your syllabus</h2>
 
             <p>
-              Upload the complete IET DAVV syllabus
-              PDF once. The app will separate
-              Semester I, Semester II, subjects,
-              units and topics automatically.
+              Upload the complete IET DAVV syllabus PDF once. The app will
+              separate Semester I, Semester II, subjects, units and topics
+              automatically.
             </p>
 
             <label className="pdf-upload-button">
               📄 Choose PDF
-
               <input
                 type="file"
                 accept=".pdf,application/pdf"
@@ -1284,112 +967,23 @@ function App() {
             <div className="syllabus-overall-card">
               <div>
                 <span>Overall Syllabus Progress</span>
-
-                <strong>
-                  {getOverallSyllabusProgress()}%
-                </strong>
+                <strong>{getOverallSyllabusProgress()}%</strong>
               </div>
 
               <div className="large-progress">
-                <div
-                  style={{
-                    width: `${getOverallSyllabusProgress()}%`,
-                  }}
-                />
+                <div style={{ width: `${getOverallSyllabusProgress()}%` }} />
               </div>
             </div>
 
             <div className="semester-tabs">
               <div>
                 <h2>Semester I</h2>
-
-                <div className="syllabus-subject-grid">
-                  {(syllabus.semester1 || []).map(
-                    (subject) => (
-                      <button
-                        key={subject.id}
-                        className={`syllabus-subject-card ${
-                          selectedSyllabusSubject ===
-                          subject.id
-                            ? "selected"
-                            : ""
-                        }`}
-                        onClick={() =>
-                          setSelectedSyllabusSubject(
-                            subject.id
-                          )
-                        }
-                      >
-                        <strong>
-                          {subject.name}
-                        </strong>
-
-                        <span>
-                          {getSubjectProgress(
-                            subject
-                          )}
-                          %
-                        </span>
-
-                        <div className="small-progress">
-                          <div
-                            style={{
-                              width: `${getSubjectProgress(
-                                subject
-                              )}%`,
-                            }}
-                          />
-                        </div>
-                      </button>
-                    )
-                  )}
-                </div>
+                {renderSemesterSubjects(syllabus.semester1)}
               </div>
 
               <div>
                 <h2>Semester II</h2>
-
-                <div className="syllabus-subject-grid">
-                  {(syllabus.semester2 || []).map(
-                    (subject) => (
-                      <button
-                        key={subject.id}
-                        className={`syllabus-subject-card ${
-                          selectedSyllabusSubject ===
-                          subject.id
-                            ? "selected"
-                            : ""
-                        }`}
-                        onClick={() =>
-                          setSelectedSyllabusSubject(
-                            subject.id
-                          )
-                        }
-                      >
-                        <strong>
-                          {subject.name}
-                        </strong>
-
-                        <span>
-                          {getSubjectProgress(
-                            subject
-                          )}
-                          %
-                        </span>
-
-                        <div className="small-progress">
-                          <div
-                            style={{
-                              width: `${getSubjectProgress(
-                                subject
-                              )}%`,
-                            }}
-                          />
-                        </div>
-                      </button>
-                    )
-                  )}
-                </div>
+                {renderSemesterSubjects(syllabus.semester2)}
               </div>
             </div>
 
@@ -1397,154 +991,88 @@ function App() {
               <div className="panel selected-syllabus">
                 <div className="selected-syllabus-header">
                   <div>
-                    <h2>
-                      {selectedSubject.name}
-                    </h2>
-
-                    <span>
-                      {selectedSubject.code}
-                    </span>
+                    <h2>{selectedSubject.name}</h2>
+                    <span>{selectedSubject.code}</span>
                   </div>
 
-                  <strong>
-                    {getSubjectProgress(
-                      selectedSubject
-                    )}
-                    %
-                  </strong>
+                  <strong>{getSubjectProgress(selectedSubject)}%</strong>
                 </div>
 
                 <div className="large-progress">
                   <div
-                    style={{
-                      width: `${getSubjectProgress(
-                        selectedSubject
-                      )}%`,
-                    }}
+                    style={{ width: `${getSubjectProgress(selectedSubject)}%` }}
                   />
                 </div>
 
                 <div className="unit-list">
-                  {selectedSubject.units.map(
-                    (unit) => {
-                      const completed =
-                        unit.topics.filter(
-                          (topic) =>
-                            topic.completed
-                        ).length;
+                  {selectedSubject.units.map((unit) => {
+                    const completed = unit.topics.filter(
+                      (topic) => topic.completed
+                    ).length;
 
-                      return (
-                        <div
-                          className="unit-card"
-                          key={unit.id}
+                    return (
+                      <div className="unit-card" key={unit.id}>
+                        <button
+                          className="unit-header"
+                          onClick={() => toggleUnit(unit.id)}
                         >
-                          <button
-                            className="unit-header"
-                            onClick={() =>
-                              toggleUnit(
-                                unit.id
-                              )
-                            }
-                          >
-                            <div>
-                              <strong>
-                                {unit.name}
-                              </strong>
-
-                              <span>
-                                {completed} /{" "}
-                                {
-                                  unit
-                                    .topics
-                                    .length
-                                }{" "}
-                                completed
-                              </span>
-                            </div>
-
+                          <div>
+                            <strong>{unit.name}</strong>
                             <span>
-                              {expandedUnits[
-                                unit.id
-                              ]
-                                ? "▲"
-                                : "▼"}
+                              {completed} / {unit.topics.length} completed
                             </span>
-                          </button>
+                          </div>
 
-                          {expandedUnits[
-                            unit.id
-                          ] && (
-                            <div className="unit-topics">
-                              {unit.topics.map(
-                                (topic) => (
-                                  <label
-                                    className={`syllabus-topic ${
-                                      topic.completed
-                                        ? "completed"
-                                        : ""
-                                    }`}
-                                    key={
-                                      topic.id
-                                    }
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={
-                                        topic.completed
-                                      }
-                                      onChange={() =>
-                                        toggleTopic(
-                                          selectedSubject.id,
-                                          unit.id,
-                                          topic.id
-                                        )
-                                      }
-                                    />
+                          <span>{expandedUnits[unit.id] ? "▲" : "▼"}</span>
+                        </button>
 
-                                    <span>
-                                      {
-                                        topic.name
-                                      }
-                                    </span>
-                                  </label>
-                                )
-                              )}
-
-                              <div className="manual-topic">
+                        {expandedUnits[unit.id] && (
+                          <div className="unit-topics">
+                            {unit.topics.map((topic) => (
+                              <label
+                                className={`syllabus-topic ${
+                                  topic.completed ? "completed" : ""
+                                }`}
+                                key={topic.id}
+                              >
                                 <input
-                                  type="text"
-                                  placeholder="Add topic..."
-                                  value={
-                                    newTopic
-                                  }
-                                  onChange={(
-                                    e
-                                  ) =>
-                                    setNewTopic(
-                                      e.target
-                                        .value
+                                  type="checkbox"
+                                  checked={topic.completed}
+                                  onChange={() =>
+                                    toggleTopic(
+                                      selectedSubject.id,
+                                      unit.id,
+                                      topic.id
                                     )
                                   }
                                 />
 
-                                <button
-                                  className="secondary-button"
-                                  onClick={() =>
-                                    addManualTopic(
-                                      selectedSubject.id,
-                                      unit.id
-                                    )
-                                  }
-                                >
-                                  + Add
-                                </button>
-                              </div>
+                                <span>{topic.name}</span>
+                              </label>
+                            ))}
+
+                            <div className="manual-topic">
+                              <input
+                                type="text"
+                                placeholder="Add topic..."
+                                value={newTopic}
+                                onChange={(e) => setNewTopic(e.target.value)}
+                              />
+
+                              <button
+                                className="secondary-button"
+                                onClick={() =>
+                                  addManualTopic(selectedSubject.id, unit.id)
+                                }
+                              >
+                                + Add
+                              </button>
                             </div>
-                          )}
-                        </div>
-                      );
-                    }
-                  )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1553,6 +1081,10 @@ function App() {
       </>
     );
   }
+
+  // =========================================================
+  // TIMETABLE PAGE
+  // =========================================================
 
   function Timetable() {
     const totalClasses = timetable.length;
@@ -1564,6 +1096,9 @@ function App() {
       padding: "16px",
     };
 
+    const setField = (key) => (e) =>
+      setTimetableForm((prev) => ({ ...prev, [key]: e.target.value }));
+
     return (
       <>
         <div className="page-header">
@@ -1572,10 +1107,7 @@ function App() {
             <p>Plan your weekly classes in one place.</p>
           </div>
 
-          <button
-            className="primary-button"
-            onClick={() => openTimetableForm()}
-          >
+          <button className="primary-button" onClick={() => openTimetableForm()}>
             + Add Class
           </button>
         </div>
@@ -1603,9 +1135,7 @@ function App() {
           <div className="panel" style={{ marginBottom: "24px" }}>
             <div className="panel-header">
               <div>
-                <h2>
-                  {editingTimetableId ? "Edit Class" : "Add Class"}
-                </h2>
+                <h2>{editingTimetableId ? "Edit Class" : "Add Class"}</h2>
                 <p>Enter the details for this weekly class.</p>
               </div>
               <button
@@ -1628,15 +1158,7 @@ function App() {
             >
               <label>
                 Day
-                <select
-                  value={timetableForm.day}
-                  onChange={(e) =>
-                    setTimetableForm((prev) => ({
-                      ...prev,
-                      day: e.target.value,
-                    }))
-                  }
-                >
+                <select value={timetableForm.day} onChange={setField("day")}>
                   {DAYS.map((day) => (
                     <option key={day} value={day}>
                       {day}
@@ -1649,12 +1171,7 @@ function App() {
                 Subject
                 <select
                   value={timetableForm.subject}
-                  onChange={(e) =>
-                    setTimetableForm((prev) => ({
-                      ...prev,
-                      subject: e.target.value,
-                    }))
-                  }
+                  onChange={setField("subject")}
                 >
                   <option value="">Select subject</option>
                   {subjects.map((subject) => (
@@ -1670,12 +1187,7 @@ function App() {
                 <input
                   type="time"
                   value={timetableForm.startTime}
-                  onChange={(e) =>
-                    setTimetableForm((prev) => ({
-                      ...prev,
-                      startTime: e.target.value,
-                    }))
-                  }
+                  onChange={setField("startTime")}
                 />
               </label>
 
@@ -1684,12 +1196,7 @@ function App() {
                 <input
                   type="time"
                   value={timetableForm.endTime}
-                  onChange={(e) =>
-                    setTimetableForm((prev) => ({
-                      ...prev,
-                      endTime: e.target.value,
-                    }))
-                  }
+                  onChange={setField("endTime")}
                 />
               </label>
 
@@ -1699,12 +1206,7 @@ function App() {
                   type="text"
                   placeholder="e.g. Lab 2"
                   value={timetableForm.room}
-                  onChange={(e) =>
-                    setTimetableForm((prev) => ({
-                      ...prev,
-                      room: e.target.value,
-                    }))
-                  }
+                  onChange={setField("room")}
                 />
               </label>
 
@@ -1714,12 +1216,7 @@ function App() {
                   type="text"
                   placeholder="Optional"
                   value={timetableForm.teacher}
-                  onChange={(e) =>
-                    setTimetableForm((prev) => ({
-                      ...prev,
-                      teacher: e.target.value,
-                    }))
-                  }
+                  onChange={setField("teacher")}
                 />
               </label>
             </div>
@@ -1763,7 +1260,9 @@ function App() {
                 <section key={day} className="panel" style={{ margin: 0 }}>
                   <div className="panel-header">
                     <h2>{day}</h2>
-                    <span>{entries.length} class{entries.length === 1 ? "" : "es"}</span>
+                    <span>
+                      {entries.length} class{entries.length === 1 ? "" : "es"}
+                    </span>
                   </div>
 
                   {entries.length === 0 ? (
@@ -1790,7 +1289,13 @@ function App() {
                               👨‍🏫 {entry.teacher}
                             </div>
                           )}
-                          <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "8px",
+                              marginTop: "12px",
+                            }}
+                          >
                             <button
                               className="secondary-button"
                               onClick={() => openTimetableForm(entry)}
@@ -1817,6 +1322,10 @@ function App() {
     );
   }
 
+  // =========================================================
+  // SETTINGS / BACKUP
+  // =========================================================
+
   function updateSetting(key, value) {
     setSettings((prev) => ({ ...prev, [key]: value }));
   }
@@ -1838,7 +1347,9 @@ function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `studytrack-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `studytrack-backup-${new Date()
+      .toISOString()
+      .slice(0, 10)}.json`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -1850,6 +1361,7 @@ function App() {
     setImportingBackup(true);
 
     const reader = new FileReader();
+
     reader.onload = () => {
       try {
         const backup = JSON.parse(reader.result);
@@ -1867,12 +1379,7 @@ function App() {
         setSubjects(backup.subjects);
         setSyllabus(backup.syllabus || null);
         setTimetable(Array.isArray(backup.timetable) ? backup.timetable : []);
-        setSettings(backup.settings || {
-          studentName: "",
-          defaultBenchmark: 75,
-          warningThreshold: 75,
-          theme: "dark",
-        });
+        setSettings(backup.settings || DEFAULT_SETTINGS);
         setPage("dashboard");
         alert("Backup imported successfully!");
       } catch (error) {
@@ -1882,6 +1389,7 @@ function App() {
         event.target.value = "";
       }
     };
+
     reader.readAsText(file);
   }
 
@@ -1895,12 +1403,7 @@ function App() {
     setSubjects(DEFAULT_SUBJECTS);
     setSyllabus(null);
     setTimetable([]);
-    setSettings({
-      studentName: "",
-      defaultBenchmark: 75,
-      warningThreshold: 75,
-      theme: "dark",
-    });
+    setSettings(DEFAULT_SETTINGS);
     setNewBenchmark(75);
     setPage("dashboard");
 
@@ -1913,6 +1416,8 @@ function App() {
   }
 
   function Settings() {
+    const clamp = (value) => Math.min(100, Math.max(0, Number(value)));
+
     return (
       <>
         <div className="page-header">
@@ -1948,7 +1453,13 @@ function App() {
                 <p>These defaults are used for new attendance subjects.</p>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: "16px",
+              }}
+            >
               <label>
                 Default benchmark (%)
                 <input
@@ -1957,7 +1468,7 @@ function App() {
                   max="100"
                   value={settings.defaultBenchmark}
                   onChange={(e) => {
-                    const value = Math.min(100, Math.max(0, Number(e.target.value)));
+                    const value = clamp(e.target.value);
                     updateSetting("defaultBenchmark", value);
                     setNewBenchmark(value);
                   }}
@@ -1970,7 +1481,9 @@ function App() {
                   min="0"
                   max="100"
                   value={settings.warningThreshold}
-                  onChange={(e) => updateSetting("warningThreshold", Math.min(100, Math.max(0, Number(e.target.value))))}
+                  onChange={(e) =>
+                    updateSetting("warningThreshold", clamp(e.target.value))
+                  }
                 />
               </label>
             </div>
@@ -1980,7 +1493,9 @@ function App() {
             <div className="panel-header">
               <div>
                 <h2>🌙 Appearance</h2>
-                <p>Choose how StudyTrack should remember your preferred theme.</p>
+                <p>
+                  Choose how StudyTrack should remember your preferred theme.
+                </p>
               </div>
             </div>
             <label>
@@ -1994,7 +1509,8 @@ function App() {
               </select>
             </label>
             <p style={{ marginTop: "10px", fontSize: "13px", opacity: 0.65 }}>
-              Your current app styling remains unchanged; this preference is saved for future theme styling.
+              Your current app styling remains unchanged; this preference is
+              saved for future theme styling.
             </p>
           </div>
 
@@ -2002,7 +1518,10 @@ function App() {
             <div className="panel-header">
               <div>
                 <h2>💾 Backup & Restore</h2>
-                <p>Save your attendance, syllabus, timetable and settings as one file.</p>
+                <p>
+                  Save your attendance, syllabus, timetable and settings as one
+                  file.
+                </p>
               </div>
             </div>
             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
@@ -2022,7 +1541,10 @@ function App() {
             </div>
           </div>
 
-          <div className="panel" style={{ border: "1px solid rgba(239,68,68,0.35)" }}>
+          <div
+            className="panel"
+            style={{ border: "1px solid rgba(239,68,68,0.35)" }}
+          >
             <div className="panel-header">
               <div>
                 <h2>🗑️ Reset App Data</h2>
@@ -2038,79 +1560,344 @@ function App() {
     );
   }
 
+  // =========================================================
+  // STATISTICS PAGE
+  // =========================================================
+
   function Statistics() {
-    const totalPresent = subjects.reduce((sum, subject) => sum + subject.present, 0);
-    const totalAbsent = subjects.reduce((sum, subject) => sum + subject.absent, 0);
+    const totalPresent = subjects.reduce((sum, s) => sum + s.present, 0);
+    const totalAbsent = subjects.reduce((sum, s) => sum + s.absent, 0);
     const totalClasses = totalPresent + totalAbsent;
-    const overall = totalClasses > 0 ? Math.round((totalPresent / totalClasses) * 100) : 0;
-    const subjectStats = subjects.map((subject) => ({ ...subject, percentage: getPercentage(subject), total: subject.present + subject.absent }));
-    const scheduledBySubject = subjects.map((subject) => ({ name: subject.name, count: timetable.filter((entry) => entry.subject === subject.name).length }));
-    const maxScheduled = Math.max(...scheduledBySubject.map((item) => item.count), 1);
-    const scheduledDays = DAYS.map((day) => ({ day: day.slice(0, 3), count: getDayEntries(day).length }));
-    const maxDaily = Math.max(...scheduledDays.map((item) => item.count), 1);
+    const overall =
+      totalClasses > 0 ? Math.round((totalPresent / totalClasses) * 100) : 0;
+
+    const subjectStats = subjects.map((s) => ({
+      ...s,
+      percentage: getPercentage(s),
+      total: s.present + s.absent,
+    }));
+
+    const scheduledBySubject = subjects.map((s) => ({
+      name: s.name,
+      count: timetable.filter((entry) => entry.subject === s.name).length,
+    }));
+
+    const maxScheduled = Math.max(...scheduledBySubject.map((i) => i.count), 1);
+
+    const scheduledDays = DAYS.map((day) => ({
+      day: day.slice(0, 3),
+      count: getDayEntries(day).length,
+    }));
+
+    const maxDaily = Math.max(...scheduledDays.map((i) => i.count), 1);
+
+    const track = {
+      height: "12px",
+      background: "rgba(128,128,128,0.18)",
+      borderRadius: "999px",
+      overflow: "hidden",
+    };
+
+    const row = {
+      display: "flex",
+      justifyContent: "space-between",
+      marginBottom: "7px",
+    };
 
     return (
       <>
-        <div className="page-header"><div><h1>Statistics</h1><p>See your attendance and timetable performance at a glance.</p></div></div>
-        <div className="stats-grid">
-          <div className="stat-card"><span>Overall Attendance</span><strong>{overall}%</strong></div>
-          <div className="stat-card"><span>Total Classes</span><strong>{totalClasses}</strong></div>
-          <div className="stat-card"><span>Present</span><strong>{totalPresent}</strong></div>
-          <div className="stat-card"><span>Absent</span><strong>{totalAbsent}</strong></div>
+        <div className="page-header">
+          <div>
+            <h1>Statistics</h1>
+            <p>See your attendance and timetable performance at a glance.</p>
+          </div>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(360px,1fr))",gap:"20px",marginTop:"20px"}}>
+        <div className="stats-grid">
+          <div className="stat-card">
+            <span>Overall Attendance</span>
+            <strong>{overall}%</strong>
+          </div>
+          <div className="stat-card">
+            <span>Total Classes</span>
+            <strong>{totalClasses}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Present</span>
+            <strong>{totalPresent}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Absent</span>
+            <strong>{totalAbsent}</strong>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(360px,1fr))",
+            gap: "20px",
+            marginTop: "20px",
+          }}
+        >
           <div className="panel">
-            <div className="panel-header"><div><h2>Attendance by Subject</h2><p>Your current attendance percentage.</p></div></div>
-            {subjectStats.length === 0 ? <p>No subjects available yet.</p> : <div style={{display:"grid",gap:"18px"}}>{subjectStats.map((item)=><div key={item.id}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"7px"}}><strong>{item.name}</strong><strong>{item.percentage}%</strong></div>
-              <div style={{height:"12px",background:"rgba(128,128,128,0.18)",borderRadius:"999px",overflow:"hidden"}}><div style={{width:`${item.percentage}%`,height:"100%",background:item.percentage>=item.benchmark?"#22c55e":"#f59e0b",borderRadius:"999px",transition:"width .4s ease"}} /></div>
-              <div style={{marginTop:"6px",fontSize:"12px",opacity:.65}}>Target: {item.benchmark}%</div>
-            </div>)}</div>}
+            <div className="panel-header">
+              <div>
+                <h2>Attendance by Subject</h2>
+                <p>Your current attendance percentage.</p>
+              </div>
+            </div>
+            {subjectStats.length === 0 ? (
+              <p>No subjects available yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: "18px" }}>
+                {subjectStats.map((item) => (
+                  <div key={item.id}>
+                    <div style={row}>
+                      <strong>{item.name}</strong>
+                      <strong>{item.percentage}%</strong>
+                    </div>
+                    <div style={track}>
+                      <div
+                        style={{
+                          width: `${item.percentage}%`,
+                          height: "100%",
+                          background:
+                            item.percentage >= item.benchmark
+                              ? "#22c55e"
+                              : "#f59e0b",
+                          borderRadius: "999px",
+                          transition: "width .4s ease",
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{ marginTop: "6px", fontSize: "12px", opacity: 0.65 }}
+                    >
+                      Target: {item.benchmark}%
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="panel">
-            <div className="panel-header"><div><h2>Present vs Absent</h2><p>Class distribution for each subject.</p></div></div>
-            {subjectStats.length === 0 ? <p>No attendance data yet.</p> : <div style={{display:"grid",gap:"18px"}}>{subjectStats.map((item)=>{const presentWidth=item.total?(item.present/item.total)*100:0;return <div key={item.id}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"7px"}}><strong>{item.name}</strong><span style={{fontSize:"12px",opacity:.7}}>{item.present} present · {item.absent} absent</span></div>
-              <div style={{display:"flex",height:"14px",borderRadius:"999px",overflow:"hidden",background:"rgba(128,128,128,0.18)"}}><div style={{width:`${presentWidth}%`,background:"#22c55e"}} /><div style={{flex:1,background:"#ef4444"}} /></div>
-            </div>})}<div style={{display:"flex",gap:"18px",fontSize:"13px",opacity:.75}}><span>🟢 Present</span><span>🔴 Absent</span></div></div>}
+            <div className="panel-header">
+              <div>
+                <h2>Present vs Absent</h2>
+                <p>Class distribution for each subject.</p>
+              </div>
+            </div>
+            {subjectStats.length === 0 ? (
+              <p>No attendance data yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: "18px" }}>
+                {subjectStats.map((item) => {
+                  const presentWidth = item.total
+                    ? (item.present / item.total) * 100
+                    : 0;
+
+                  return (
+                    <div key={item.id}>
+                      <div style={row}>
+                        <strong>{item.name}</strong>
+                        <span style={{ fontSize: "12px", opacity: 0.7 }}>
+                          {item.present} present · {item.absent} absent
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          height: "14px",
+                          borderRadius: "999px",
+                          overflow: "hidden",
+                          background: "rgba(128,128,128,0.18)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${presentWidth}%`,
+                            background: "#22c55e",
+                          }}
+                        />
+                        <div style={{ flex: 1, background: "#ef4444" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "18px",
+                    fontSize: "13px",
+                    opacity: 0.75,
+                  }}
+                >
+                  <span>🟢 Present</span>
+                  <span>🔴 Absent</span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="panel">
-            <div className="panel-header"><div><h2>Attendance vs Benchmark</h2><p>Compare your current percentage with your target.</p></div></div>
-            {subjectStats.length === 0 ? <p>No subjects available yet.</p> : <div style={{display:"grid",gap:"16px"}}>{subjectStats.map((item)=><div key={item.id}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"6px"}}><strong>{item.name}</strong><span>{item.percentage}% / {item.benchmark}%</span></div>
-              <div style={{position:"relative",height:"10px",borderRadius:"999px",background:"rgba(128,128,128,0.18)"}}><div style={{width:`${item.percentage}%`,height:"100%",borderRadius:"999px",background:item.percentage>=item.benchmark?"#22c55e":"#f59e0b"}} /><div style={{position:"absolute",left:`${item.benchmark}%`,top:"-5px",width:"3px",height:"20px",background:"currentColor",borderRadius:"3px",opacity:.7}} /></div>
-            </div>)}</div>}
+            <div className="panel-header">
+              <div>
+                <h2>Attendance vs Benchmark</h2>
+                <p>Compare your current percentage with your target.</p>
+              </div>
+            </div>
+            {subjectStats.length === 0 ? (
+              <p>No subjects available yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: "16px" }}>
+                {subjectStats.map((item) => (
+                  <div key={item.id}>
+                    <div style={{ ...row, marginBottom: "6px" }}>
+                      <strong>{item.name}</strong>
+                      <span>
+                        {item.percentage}% / {item.benchmark}%
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        position: "relative",
+                        height: "10px",
+                        borderRadius: "999px",
+                        background: "rgba(128,128,128,0.18)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${item.percentage}%`,
+                          height: "100%",
+                          borderRadius: "999px",
+                          background:
+                            item.percentage >= item.benchmark
+                              ? "#22c55e"
+                              : "#f59e0b",
+                        }}
+                      />
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: `${item.benchmark}%`,
+                          top: "-5px",
+                          width: "3px",
+                          height: "20px",
+                          background: "currentColor",
+                          borderRadius: "3px",
+                          opacity: 0.7,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="panel">
-            <div className="panel-header"><div><h2>Classes by Subject</h2><p>Weekly classes from your timetable.</p></div></div>
-            {timetable.length === 0 ? <p>No timetable classes added yet.</p> : <div style={{display:"grid",gap:"14px"}}>{scheduledBySubject.filter((item)=>item.count>0).map((item)=><div key={item.name}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"6px"}}><strong>{item.name}</strong><span>{item.count}</span></div>
-              <div style={{height:"10px",background:"rgba(128,128,128,0.18)",borderRadius:"999px",overflow:"hidden"}}><div style={{width:`${(item.count/maxScheduled)*100}%`,height:"100%",background:"#6366f1",borderRadius:"999px"}} /></div>
-            </div>)}</div>}
+            <div className="panel-header">
+              <div>
+                <h2>Classes by Subject</h2>
+                <p>Weekly classes from your timetable.</p>
+              </div>
+            </div>
+            {timetable.length === 0 ? (
+              <p>No timetable classes added yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: "14px" }}>
+                {scheduledBySubject
+                  .filter((item) => item.count > 0)
+                  .map((item) => (
+                    <div key={item.name}>
+                      <div style={{ ...row, marginBottom: "6px" }}>
+                        <strong>{item.name}</strong>
+                        <span>{item.count}</span>
+                      </div>
+                      <div style={{ ...track, height: "10px" }}>
+                        <div
+                          style={{
+                            width: `${(item.count / maxScheduled) * 100}%`,
+                            height: "100%",
+                            background: "#6366f1",
+                            borderRadius: "999px",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
 
-          <div className="panel" style={{gridColumn:"1 / -1"}}>
-            <div className="panel-header"><div><h2>Weekly Class Distribution</h2><p>How your scheduled classes are spread across the week.</p></div></div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(6,minmax(45px,1fr))",gap:"14px",alignItems:"end",minHeight:"190px"}}>{scheduledDays.map((item)=><div key={item.day} style={{height:"170px",display:"flex",flexDirection:"column",justifyContent:"flex-end",alignItems:"center",gap:"8px"}}>
-              <strong>{item.count}</strong><div style={{width:"min(44px,70%)",height:`${Math.max(item.count?(item.count/maxDaily)*120:4,4)}px`,background:"#8b5cf6",borderRadius:"10px 10px 4px 4px",transition:"height .4s ease"}} /><span style={{fontSize:"12px",opacity:.7}}>{item.day}</span>
-            </div>)}</div>
+          <div className="panel" style={{ gridColumn: "1 / -1" }}>
+            <div className="panel-header">
+              <div>
+                <h2>Weekly Class Distribution</h2>
+                <p>How your scheduled classes are spread across the week.</p>
+              </div>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(6,minmax(45px,1fr))",
+                gap: "14px",
+                alignItems: "end",
+                minHeight: "190px",
+              }}
+            >
+              {scheduledDays.map((item) => (
+                <div
+                  key={item.day}
+                  style={{
+                    height: "170px",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <strong>{item.count}</strong>
+                  <div
+                    style={{
+                      width: "min(44px,70%)",
+                      height: `${Math.max(
+                        item.count ? (item.count / maxDaily) * 120 : 4,
+                        4
+                      )}px`,
+                      background: "#8b5cf6",
+                      borderRadius: "10px 10px 4px 4px",
+                      transition: "height .4s ease",
+                    }}
+                  />
+                  <span style={{ fontSize: "12px", opacity: 0.7 }}>
+                    {item.day}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </>
     );
   }
 
-  function Placeholder({ title }) {
-    return (<><div className="page-header"><div><h1>{title}</h1><p>This section is coming next.</p></div></div><div className="panel placeholder"><h2>{title}</h2><p>We will build this section next.</p></div></>);
-  }
+  // =========================================================
+  // APP SHELL
+  // =========================================================
 
-  // =========================================================
-  // APP
-  // =========================================================
+  const NAV = [
+    ["dashboard", "🏠 Dashboard"],
+    ["attendance", "📊 Attendance"],
+    ["syllabus", "📚 Syllabus"],
+    ["timetable", "🗓️ Timetable"],
+    ["statistics", "📈 Statistics"],
+    ["settings", "⚙️ Settings"],
+  ];
 
   return (
     <div className="app-shell">
@@ -2125,97 +1912,24 @@ function App() {
         </div>
 
         <nav>
-          <button
-            className={
-              page === "dashboard"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setPage("dashboard")
-            }
-          >
-            🏠 Dashboard
-          </button>
-
-          <button
-            className={
-              page === "attendance"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setPage("attendance")
-            }
-          >
-            📊 Attendance
-          </button>
-
-          <button
-            className={
-              page === "syllabus"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setPage("syllabus")
-            }
-          >
-            📚 Syllabus
-          </button>
-
-          <button
-            className={
-              page === "timetable"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setPage("timetable")
-            }
-          >
-            🗓️ Timetable
-          </button>
-
-          <button
-            className={
-              page === "statistics"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setPage("statistics")
-            }
-          >
-            📈 Statistics
-          </button>
-
-          <button
-            className={
-              page === "settings"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setPage("settings")
-            }
-          >
-            ⚙️ Settings
-          </button>
+          {NAV.map(([key, label]) => (
+            <button
+              key={key}
+              className={page === key ? "active" : ""}
+              onClick={() => setPage(key)}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
       </aside>
 
       <main>
         {page === "dashboard" && Dashboard()}
-
         {page === "attendance" && Attendance()}
-
         {page === "syllabus" && Syllabus()}
-
         {page === "timetable" && Timetable()}
-
         {page === "statistics" && Statistics()}
-
         {page === "settings" && Settings()}
       </main>
     </div>
