@@ -1035,12 +1035,12 @@ function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday
 const PENGUIN_LINES = [
   "Waddle waddle! 🐧",
   "Stay cool, keep studying ❄️",
-  "Fish break later? 🐟",
+  "No webseries binges! 📺",
   "You're doing great!",
-  "Pip believes in you 💙",
+  "Pip believes in you Aanyaaa💖",
 ];
 const PENGUIN_NAP = ["Zzz… 😴", "Shh… focus time 🤫"];
-const PENGUIN_BREAK = ["Slide time! 🧊", "Break! Go grab a fish 🐟"];
+const PENGUIN_BREAK = ["Slide time! 🧊", "Break! Go grab some water 🥤"];
 
 function PetPenguin({ state, walk, bubbles }) {
   const [pos, setPos] = useState({ left: null, ms: 0 });
