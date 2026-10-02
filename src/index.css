@@ -2135,3 +2135,187 @@ body {
   .pomo-tab { flex: 1; padding: 8px 6px; font-size: 12px; }
   .pomo .focus-controls button { flex: 1 1 90px; }
 }
+
+/* ---------- Pet cat (walks along the top edge of the Focus card) ---------- */
+
+/* the cat sits above the card edge, so the card must not clip it
+   (the gradient background still follows the rounded corners) */
+.focus-card.pomo { overflow: visible; }
+
+.cat-track {
+  --cat-w: 100px;
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: calc(100% - 7px);
+  height: 0;
+  z-index: 5;
+  pointer-events: none; /* only the cat itself is clickable */
+}
+
+.pet-cat {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: var(--cat-w);
+  pointer-events: auto;
+  transition-property: left;
+  transition-timing-function: ease-in-out;
+  transition-duration: 0ms;
+}
+
+.cat-bob {
+  transition: scale .25s ease;
+  transform-origin: bottom center;
+}
+.pet-cat.walking .cat-bob { animation: cat-step .38s ease-in-out infinite; }
+@keyframes cat-step { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+
+.cat-body {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform-origin: bottom center;
+  animation: cat-breathe 3s ease-in-out infinite;
+}
+.cat-body:hover { background: none; box-shadow: none; transform: none; }
+.cat-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 12px; }
+.cat-body svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.pet-cat .cat-tail { transform-origin: 92px 88px; animation: cat-wag 2s ease-in-out infinite; }
+.pet-cat .cat-head { transform-origin: 60px 70px; animation: cat-tilt 5s ease-in-out infinite; }
+.pet-cat .cat-ear { transition: transform .4s ease; }
+.pet-cat .cat-ear-l { transform-origin: 46px 32px; }
+.pet-cat .cat-ear-r { transform-origin: 74px 32px; }
+.pet-cat .cat-eyes ellipse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cat-blink 4s infinite;
+}
+.pet-cat .cat-zzz,
+.pet-cat .cat-heart { opacity: 0; }
+
+@keyframes cat-breathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.03); } }
+@keyframes cat-wag     { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(14deg); } }
+@keyframes cat-tilt    { 0%, 80%, 100% { transform: rotate(0); } 88% { transform: rotate(-6deg); } 94% { transform: rotate(5deg); } }
+@keyframes cat-blink   { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+
+/* ----- mood (follows today's finished sessions) ----- */
+.pet-cat[data-mood="low"] .cat-ear-l { transform: rotate(-24deg); }
+.pet-cat[data-mood="low"] .cat-ear-r { transform: rotate(24deg); }
+.pet-cat[data-mood="low"] .cat-eyes ellipse { animation: none; transform: scaleY(.55); }
+.pet-cat[data-mood="low"] .cat-tail { animation-duration: 4.5s; }
+.pet-cat[data-mood="happy"] .cat-tail { animation-duration: .9s; }
+
+/* ----- focusing: the cat naps so you can concentrate ----- */
+.pet-cat[data-state="focus"] .cat-eyes ellipse { animation: none; transform: scaleY(.12); }
+.pet-cat[data-state="focus"] .cat-tail { animation-duration: 6s; }
+.pet-cat[data-state="focus"] .cat-zzz { animation: cat-zzz 2.5s ease-in-out infinite; }
+@keyframes cat-zzz {
+  0%   { opacity: 0; transform: translateY(6px); }
+  50%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+
+/* ----- break time: the cat plays ----- */
+.pet-cat[data-state="break"] .cat-body { animation: cat-hop .8s ease-in-out infinite; }
+.pet-cat[data-state="break"] .cat-tail { animation-duration: .7s; }
+@keyframes cat-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+
+/* ----- petting ----- */
+.pet-cat.petted .cat-body { animation: cat-hop .4s ease-in-out 3; }
+.pet-cat.petted .cat-eyes ellipse { animation: none; transform: scaleY(.15); }
+.pet-cat.petted .cat-heart { animation: cat-heart 1.2s ease-out; }
+@keyframes cat-heart {
+  0%   { opacity: 0; transform: translateY(10px); }
+  30%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-14px); }
+}
+
+/* ----- session finished: big jump + confetti ----- */
+.pet-cat.celebrating .cat-body { animation: cat-jump .6s ease-in-out 3; }
+.pet-cat.celebrating .cat-eyes ellipse { animation: none; transform: scaleY(.15); }
+@keyframes cat-jump {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  35%      { transform: translateY(-26px) scaleY(1.05); }
+  60%      { transform: translateY(0) scaleY(.94); }
+}
+
+.cat-confetti {
+  position: absolute;
+  left: 50%;
+  bottom: 55%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.cat-confetti span {
+  position: absolute;
+  font-size: 18px;
+  opacity: 0;
+  animation: cat-confetti 1.5s ease-out var(--delay, 0ms) forwards;
+}
+@keyframes cat-confetti {
+  0%   { opacity: 0; transform: translate(0, 0) scale(.4) rotate(0); }
+  15%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.1) rotate(200deg); }
+}
+
+/* ----- speech bubble ----- */
+.cat-bubble {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  translate: -50% 0;
+  z-index: 2;
+  width: max-content;
+  max-width: 180px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, .15));
+  border-radius: 14px;
+  background: var(--surface-2, #171d2a);
+  color: var(--text, #e9eef6);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+  pointer-events: none;
+  transform-origin: bottom center;
+  animation: cat-bubble 4.2s ease both;
+}
+.cat-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border: inherit;
+  border-top: 0;
+  border-left: 0;
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+}
+@keyframes cat-bubble {
+  0%        { opacity: 0; transform: translateY(6px) scale(.85); }
+  6%, 90%   { opacity: 1; transform: translateY(0) scale(1); }
+  100%      { opacity: 0; transform: translateY(-4px) scale(.96); }
+}
+
+@media (max-width: 650px) {
+  .cat-track { --cat-w: 78px; left: 16px; right: 16px; }
+  .cat-bubble { max-width: 140px; font-size: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-cat, .pet-cat * { animation: none !important; transition: none !important; }
+}

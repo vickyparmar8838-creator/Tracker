@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 
 /* ------------------------------------------------------------------
    Pomodoro timer for StudyTrack
@@ -274,12 +274,371 @@ function NumberField({ label, value, range, suffix, disabled, onChange }) {
   );
 }
 
+/* ================================================================
+   Pet cat — walks along the top of the Focus card, talks in speech
+   bubbles, changes mood with your sessions, naps while you focus,
+   and celebrates when a session is finished.
+================================================================ */
+
+const CAT_LINES = {
+  low: [
+    "Wanna study together? 📚",
+    "I'm bored… start a timer?",
+    "Psst… one tiny session?",
+    "Mrrp? Let's get started!",
+  ],
+  ok: [
+    "Purr… 💕",
+    "Keep going, you're doing great!",
+    "Meow! 🐱",
+    "Don't forget to drink water 💧",
+  ],
+  happy: [
+    "You're on fire! 🔥",
+    "Best study buddy ever 💖",
+    "Purrrr… 😻",
+    "Treat time? 🐟",
+  ],
+};
+const NAP_LINES = ["Zzz… 😴", "Shh… I'm napping", "Mrrp… keep going 💪"];
+const DONE_LINES = ["Session done! Great job 🎉", "You did it! 🌟", "Yay! Proud of you 💖"];
+
+/* little burst of confetti when a session is completed */
+const CONFETTI = Array.from({ length: 10 }, (_, i) => ({
+  ch: ["🎉", "✨", "💖", "⭐", "🎊"][i % 5],
+  dx: `${(i - 4.5) * 16}px`,
+  dy: `${-70 - (i % 3) * 28}px`,
+  delay: `${(i % 4) * 70}ms`,
+}));
+
+let catGreeted = false; // greet once per page load, not every time you revisit the Dashboard
+
+const rand = (min, max) => min + Math.random() * (max - min);
+
+function pickLine(pool, lastRef) {
+  let line = pool[Math.floor(Math.random() * pool.length)];
+  for (let i = 0; i < 4 && line === lastRef.current && pool.length > 1; i += 1) {
+    line = pool[Math.floor(Math.random() * pool.length)];
+  }
+  lastRef.current = line;
+  return line;
+}
+
+function meow() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.linearRampToValueAtTime(880, t + 0.18);
+    osc.frequency.exponentialRampToValueAtTime(480, t + 0.5);
+    filter.type = "bandpass";
+    filter.frequency.value = 1400;
+    filter.Q.value = 1.2;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.09, t + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.6);
+    setTimeout(() => ctx.close(), 900);
+  } catch {
+    /* audio blocked — ignore */
+  }
+}
+
+function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday, sound }) {
+  const [petted, setPetted] = useState(false);
+  const [celebrating, setCelebrating] = useState(0); // 0 = no, otherwise an id that restarts the burst
+  const [bubble, setBubble] = useState(null); // { text, id, ms }
+  const [pos, setPos] = useState({ left: null, ms: 0 }); // px from the left of the track
+  const [facing, setFacing] = useState(1); // 1 = right, -1 = left
+  const [walking, setWalking] = useState(false);
+
+  const trackRef = useRef(null);
+  const catRef = useRef(null);
+  const lastLine = useRef("");
+  const bubbleTimer = useRef(0);
+  const petTimer = useRef(0);
+  const celebrateTimer = useRef(0);
+  const disarmTimer = useRef(0);
+  const armed = useRef(false); // true while a timer session is in progress (or just ended)
+  const celebratedAt = useRef(0);
+  const prevState = useRef(state);
+  const prevSessions = useRef(sessionsToday);
+
+  const maxLeft = () => {
+    const track = trackRef.current;
+    const cat = catRef.current;
+    return track && cat ? Math.max(0, track.clientWidth - cat.offsetWidth) : 0;
+  };
+  const curLeft = () => {
+    const track = trackRef.current;
+    const cat = catRef.current;
+    return track && cat ? cat.getBoundingClientRect().left - track.getBoundingClientRect().left : 0;
+  };
+
+  const say = useCallback((text, ms = 4200) => {
+    clearTimeout(bubbleTimer.current);
+    setBubble({ text, id: Date.now(), ms });
+    bubbleTimer.current = setTimeout(() => setBubble(null), ms);
+  }, []);
+
+  const lineFor = () => {
+    if (state === "focus") return pickLine(NAP_LINES, lastLine);
+    const pool = [...CAT_LINES[mood]];
+    if (phase === "focus" && round > 0 && round < rounds) {
+      const left = rounds - round;
+      pool.push(`${left} more ${left === 1 ? "session" : "sessions"} until a long break`);
+    }
+    if (state === "break") pool.push("Stretch those legs! 🧘");
+    return pickLine(pool, lastLine);
+  };
+
+  /* start on the right-hand side of the card */
+  useLayoutEffect(() => {
+    setPos({ left: maxLeft(), ms: 0 });
+  }, []);
+
+  /* keep the cat inside the card when the window is resized */
+  useEffect(() => {
+    const onResize = () => {
+      setPos((p) => ({ left: Math.min(p.left ?? 0, maxLeft()), ms: 0 }));
+      setWalking(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  /* clear timers on unmount */
+  useEffect(
+    () => () => {
+      clearTimeout(bubbleTimer.current);
+      clearTimeout(petTimer.current);
+      clearTimeout(celebrateTimer.current);
+      clearTimeout(disarmTimer.current);
+    },
+    []
+  );
+
+  /* greet once when the page loads */
+  useEffect(() => {
+    const id = setTimeout(() => {
+      if (catGreeted) return;
+      catGreeted = true;
+      say(sessionsToday === 0 ? "Hi! Ready to study? 📚" : "Welcome back! 💕");
+    }, 1200);
+    return () => clearTimeout(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* remember that a session is/was in progress, so a new finished session
+     is told apart from sessionsToday simply loading in */
+  useEffect(() => {
+    clearTimeout(disarmTimer.current);
+    if (busy) {
+      armed.current = true;
+    } else {
+      disarmTimer.current = setTimeout(() => {
+        armed.current = false;
+      }, 6000);
+    }
+  }, [busy]);
+
+  /* a session was finished -> celebrate */
+  useEffect(() => {
+    const prev = prevSessions.current;
+    prevSessions.current = sessionsToday;
+    if (sessionsToday > prev && armed.current) {
+      armed.current = false;
+      celebratedAt.current = Date.now();
+      setCelebrating(Date.now());
+      say(pickLine(DONE_LINES, lastLine), 4500);
+      clearTimeout(celebrateTimer.current);
+      celebrateTimer.current = setTimeout(() => setCelebrating(0), 2400);
+    }
+  }, [sessionsToday, say]);
+
+  /* react to the timer starting / pausing */
+  useEffect(() => {
+    const prev = prevState.current;
+    prevState.current = state;
+    if (prev === state) return;
+    if (Date.now() - celebratedAt.current < 1500) return; // the celebration wins
+    if (state === "focus") say("Shh… focus time 🤫");
+    else if (state === "break") {
+      say(phase === "long" ? "Long break — you earned it 🎉" : "Break time! Stretch & sip some water 💧");
+    } else if (paused) say("Paused — I'll wait 🐾");
+  }, [state, phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* chat a little now and then (never while napping) */
+  useEffect(() => {
+    if (state === "focus") return undefined;
+    const id = setInterval(() => say(lineFor(), 4200), 75000);
+    return () => clearInterval(id);
+  }, [state, mood, phase, round, rounds, say]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* wander along the card edge; stay put while napping or being petted */
+  useEffect(() => {
+    if (state === "focus" || petted) {
+      setPos({ left: curLeft(), ms: 0 }); // freeze where it is
+      setWalking(false);
+      return undefined;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return undefined;
+
+    let timer;
+    const wander = () => {
+      const max = maxLeft();
+      if (max < 60) return 0;
+      const from = curLeft();
+      let to = Math.random() * max;
+      if (Math.abs(to - from) < 90) {
+        to = from < max / 2 ? Math.min(max, from + 140) : Math.max(0, from - 140);
+      }
+      const ms = Math.abs(to - from) / 0.045; // ~45px per second
+      setFacing(to > from ? 1 : -1);
+      setWalking(true);
+      setPos({ left: to, ms });
+      return ms;
+    };
+    const loop = () => {
+      timer = setTimeout(
+        () => {
+          const ms = wander();
+          timer = setTimeout(loop, ms);
+        },
+        state === "break" ? rand(1500, 3500) : rand(3500, 8000)
+      );
+    };
+    loop();
+    return () => clearTimeout(timer);
+  }, [state, petted]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function pet() {
+    setPetted(true);
+    clearTimeout(petTimer.current);
+    petTimer.current = setTimeout(() => setPetted(false), 1500);
+    if (sound && state !== "focus") meow();
+    say(lineFor(), 3800);
+  }
+
+  const cls = ["pet-cat", petted && "petted", walking && "walking", celebrating && "celebrating"]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className="cat-track" ref={trackRef}>
+      <div
+        ref={catRef}
+        className={cls}
+        data-state={state}
+        data-mood={mood}
+        style={pos.left == null ? undefined : { left: pos.left, transitionDuration: `${pos.ms}ms` }}
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && e.propertyName === "left") setWalking(false);
+        }}
+      >
+        {bubble && (
+          <div
+            className="cat-bubble"
+            key={bubble.id}
+            aria-hidden="true"
+            style={{ animationDuration: `${bubble.ms}ms` }}
+          >
+            {bubble.text}
+          </div>
+        )}
+
+        {celebrating > 0 && (
+          <div className="cat-confetti" key={celebrating} aria-hidden="true">
+            {CONFETTI.map((c, i) => (
+              <span key={i} style={{ "--dx": c.dx, "--dy": c.dy, "--delay": c.delay }}>
+                {c.ch}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="cat-bob" style={{ scale: facing === -1 ? "-1 1" : "1 1" }}>
+          <button type="button" className="cat-body" onClick={pet} aria-label="Pet the cat" title="Pet me!">
+            <svg viewBox="0 0 120 100" aria-hidden="true">
+              <path className="cat-tail" d="M92 88 C 120 88, 118 55, 104 52"
+                fill="none" stroke="#f4a259" strokeWidth="9" strokeLinecap="round" />
+              <ellipse cx="60" cy="82" rx="34" ry="18" fill="#f4a259" />
+              <ellipse cx="44" cy="94" rx="9" ry="5" fill="#fbc98f" />
+              <ellipse cx="76" cy="94" rx="9" ry="5" fill="#fbc98f" />
+              <g className="cat-head">
+                <g className="cat-ear cat-ear-l">
+                  <polygon points="34,34 38,10 54,26" fill="#f4a259" />
+                  <polygon points="39,30 40,17 49,26" fill="#f2a0a0" />
+                </g>
+                <g className="cat-ear cat-ear-r">
+                  <polygon points="86,34 82,10 66,26" fill="#f4a259" />
+                  <polygon points="81,30 80,17 71,26" fill="#f2a0a0" />
+                </g>
+                <circle cx="60" cy="46" r="28" fill="#f4a259" />
+                <g className="cat-eyes">
+                  <ellipse cx="49" cy="44" rx="4" ry="5" fill="#1f2937" />
+                  <ellipse cx="71" cy="44" rx="4" ry="5" fill="#1f2937" />
+                </g>
+                {mood === "happy" && (
+                  <g fill="#f08a8a" opacity=".55">
+                    <ellipse cx="41" cy="54" rx="5" ry="3" />
+                    <ellipse cx="79" cy="54" rx="5" ry="3" />
+                  </g>
+                )}
+                <path d="M57 53 L63 53 L60 57 Z" fill="#e76f6f" />
+                {mood === "low" && (
+                  <path d="M54 64 Q60 58 66 64" fill="none" stroke="#7c4a1e" strokeWidth="1.6" strokeLinecap="round" />
+                )}
+                {mood === "ok" && (
+                  <path d="M60 57 Q57 62 53 60 M60 57 Q63 62 67 60" fill="none" stroke="#7c4a1e" strokeWidth="1.6" strokeLinecap="round" />
+                )}
+                {mood === "happy" && <path d="M53 59 Q60 71 67 59 Z" fill="#b3414f" stroke="#7c4a1e" strokeWidth="1.2" strokeLinejoin="round" />}
+                <g stroke="#7c4a1e" strokeWidth="1.2" strokeLinecap="round">
+                  <line x1="38" y1="54" x2="22" y2="52" />
+                  <line x1="38" y1="58" x2="22" y2="60" />
+                  <line x1="82" y1="54" x2="98" y2="52" />
+                  <line x1="82" y1="58" x2="98" y2="60" />
+                </g>
+              </g>
+              <text className="cat-zzz" x="88" y="22" fontSize="14" fill="#8b93a7">Zzz</text>
+              <text className="cat-heart" x="56" y="16" fontSize="16" fill="#ef5b7b">♥</text>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PomodoroTimer({ pomodoro: p, subjects = [], sessionsToday = 0 }) {
   const { settings, phase, remaining, running, round, locked } = p;
   const paused = locked && !running;
+  const catState = running ? (phase === "focus" ? "focus" : "break") : "idle";
+  /* the cat's mood follows how many focus sessions you finished today */
+  const catMood = sessionsToday >= 3 ? "happy" : sessionsToday >= 1 ? "ok" : "low";
 
   return (
     <section className="focus-card pomo" data-phase={phase}>
+      <PetCat
+        state={catState}
+        mood={catMood}
+        paused={paused}
+        busy={locked}
+        phase={phase}
+        round={round}
+        rounds={settings.rounds}
+        sessionsToday={sessionsToday}
+        sound={settings.sound}
+      />
+
       <header className="focus-header">
         <div>
           <h2>Focus mode</h2>
