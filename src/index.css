@@ -32,6 +32,10 @@
   --red: #f08080;
   --red-soft: rgba(240, 128, 128, 0.12);
 
+  --hover-bg: #26324a;
+  --border-hover: #46546b;
+  --hover-overlay: rgba(255, 255, 255, 0.04);
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -128,7 +132,8 @@ strong { font-variant-numeric: tabular-nums; }
 }
 
 .logo h2 { margin: 0; font-size: 17px; letter-spacing: -0.02em; }
-.logo span { color: var(--faint); font-size: 12px; }
+.logo > div:not(.logo-icon) { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.2; }
+.logo span { display: block; color: var(--faint); font-size: 12px; }
 
 nav { display: flex; flex-direction: column; gap: 4px; }
 
@@ -145,7 +150,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hover-overlay);
   color: var(--text);
 }
 
@@ -271,11 +276,11 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--surface-3);
-  color: #dce3ec;
+  color: var(--text);
   font-weight: 500;
   transition: border-color var(--ease), background var(--ease);
 }
-.secondary-button:hover { border-color: #46546b; background: #243049; }
+.secondary-button:hover { border-color: var(--border-hover); background: var(--hover-bg); }
 
 .delete-button,
 .topic-delete {
@@ -309,7 +314,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .benchmark-input input:hover,
 .topic-add-row input:hover,
 .manual-topic input:hover,
-.syllabus-selector select:hover { border-color: #46546b; }
+.syllabus-selector select:hover { border-color: var(--border-hover); }
 
 .add-form input:focus,
 .benchmark-input input:focus,
@@ -436,7 +441,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   border-radius: 0;
   transition: background var(--ease);
 }
-.dashboard-subject:hover { background: rgba(255, 255, 255, 0.025); }
+.dashboard-subject:hover { background: var(--hover-overlay); }
 .dashboard-subject:last-child { border-bottom: 0; }
 .dashboard-subject > div:first-child strong,
 .dashboard-subject > div:first-child span { display: block; }
@@ -456,7 +461,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 
 /* Timetable */
 .timetable { margin-top: 20px; }
-.classes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.classes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 10px; }
 
 .class-item {
   position: relative;
@@ -615,7 +620,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   text-align: left;
   transition: border-color var(--ease), transform var(--ease), box-shadow var(--ease), background var(--ease);
 }
-.syllabus-subject-card:hover { border-color: #46546b; transform: translateY(-2px); box-shadow: var(--shadow); }
+.syllabus-subject-card:hover { border-color: var(--border-hover); transform: translateY(-2px); box-shadow: var(--shadow); }
 .syllabus-subject-card.selected {
   border-color: var(--accent);
   background: linear-gradient(145deg, rgba(124, 140, 255, 0.12), var(--surface));
@@ -673,7 +678,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   text-align: left;
   transition: background var(--ease);
 }
-.unit-header:hover { background: rgba(255, 255, 255, 0.025); }
+.unit-header:hover { background: var(--hover-overlay); }
 .unit-header strong { display: block; margin-bottom: 4px; }
 .unit-header span { color: var(--muted); font-size: 13px; }
 
@@ -691,7 +696,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   transition: background var(--ease);
 }
 .syllabus-topic > * { min-width: 0; max-width: 100%; }
-.syllabus-topic:hover { background: rgba(255, 255, 255, 0.025); }
+.syllabus-topic:hover { background: var(--hover-overlay); }
 .syllabus-topic:last-of-type { border-bottom: 0; }
 .syllabus-topic input { margin-top: 3px; }
 .syllabus-topic.completed span { color: var(--faint); text-decoration: line-through; }
@@ -771,7 +776,6 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   .stats-grid { gap: 10px; }
   .stat-card { padding: 16px; }
   .stat-card strong { font-size: 24px; }
-  .classes { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 500px) {
@@ -817,7 +821,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 }
 
 /* Whatever element comes right after the sidebar is the page content */
-.sidebar + * {
+.sidebar + *:not(.sidebar-overlay):not(.mobile-menu-button) {
   margin-left: var(--sidebar-w);
   min-width: 0;
 }
@@ -838,7 +842,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   transition: background var(--ease), color var(--ease);
 }
 .sidebar nav button:hover,
-.sidebar nav a:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); }
+.sidebar nav a:hover { background: var(--hover-overlay); color: var(--text); }
 .sidebar nav .active,
 .sidebar nav [aria-current="page"] {
   background: var(--accent-soft);
@@ -882,7 +886,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   line-height: 1.2;
   transition: background var(--ease), border-color var(--ease), transform var(--ease), box-shadow var(--ease);
 }
-:where(button:hover) { background: #26324a; border-color: #46546b; }
+:where(button:hover) { background: var(--hover-bg); border-color: var(--border-hover); }
 :where(button:active) { transform: scale(0.97); }
 :where(button:disabled) { opacity: 0.5; cursor: not-allowed; transform: none; }
 
@@ -924,7 +928,7 @@ button[class*="remove"]:hover {
   outline: none;
   transition: border-color var(--ease), box-shadow var(--ease);
 }
-:where(input, select, textarea):where(:hover) { border-color: #46546b; }
+:where(input, select, textarea):where(:hover) { border-color: var(--border-hover); }
 :where(input, select, textarea):where(:focus) {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(124, 140, 255, 0.18);
@@ -949,9 +953,11 @@ input[type="radio"] { accent-color: var(--accent-strong); }
 /* A label that wraps its field: put a gap between text and field */
 label:has(> input:not([type="checkbox"]):not([type="radio"])),
 label:has(> select) {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
 }
 
 
@@ -1193,6 +1199,12 @@ label:has(> select) {
   --red: #c24141;
   --red-soft: rgba(194, 65, 65, 0.10);
 
+  --hover-bg: #e4e9fb;
+  --border-hover: #a9b4c9;
+  --hover-overlay: rgba(23, 32, 51, 0.045);
+  --glass: rgba(23, 32, 51, 0.03);
+  --glass-strong: rgba(23, 32, 51, 0.05);
+
   color-scheme: light;
 }
 
@@ -1280,7 +1292,7 @@ label:has(> select) {
 /* ---------- Enhanced design tokens ---------- */
 
 :root {
-  --glass: rgba(255, 255, 255, 0.025);
+  --glass: var(--hover-overlay);
   --glass-strong: rgba(255, 255, 255, 0.045);
   --glow: rgba(124, 140, 255, 0.16);
   --card-hover-y: -3px;
@@ -1887,4 +1899,114 @@ body {
     flex-direction: column;
     gap: 4px;
   }
+}
+
+/* =========================================================
+   BUG FIXES — timetable, forms, mobile drawer
+   ========================================================= */
+
+/* ---------- Stat-card rows never overflow ---------- */
+.main :has(> .stat-card) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+.stat-card { min-width: 0; }
+
+/* ---------- Timetable: day grid ---------- */
+.timetable-grid, .timetable-days, .timetable-week, .week-grid, .days-grid,
+.day-grid, .weekly-grid, .schedule-grid, .week-view,
+.main [class*="timetable"][class*="grid"],
+.main [class*="week"][class*="grid"],
+.main [class*="days"][class*="grid"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 16px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+}
+
+/* ---------- Timetable: day card ---------- */
+.day-card, .timetable-day, .day-column, .schedule-day,
+.main [class*="day-card"], .main [class*="day-col"] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* ---------- Class item: wraps instead of overlapping ---------- */
+.class-item { flex-wrap: wrap; row-gap: 8px; column-gap: 14px; align-items: center; }
+.class-item > strong:first-child { flex: 1 1 100%; overflow-wrap: anywhere; }
+.class-item > span { flex: 0 1 auto; margin-top: 0; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.class-item time { white-space: nowrap; }
+
+/* Edit / Delete buttons stay inside the card */
+.class-item > button { flex: 1 1 80px; padding: 7px 12px; font-size: 13px; }
+.class-item > div:has(> button),
+.class-item [class*="action"] { flex: 1 1 100%; display: flex; gap: 8px; margin: 0; }
+.class-item > div:has(> button) > button,
+.class-item [class*="action"] button { flex: 1; padding: 7px 12px; font-size: 13px; }
+
+.class-item button[class*="edit"],
+.class-item button.secondary-button {
+  border-color: rgba(124, 140, 255, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.class-item button[class*="edit"]:hover,
+.class-item button.secondary-button:hover { background: var(--hover-bg); }
+
+/* ---------- "Add Class" form: label above field, wraps ---------- */
+form:has(input[type="time"]),
+.main :where(div, section):has(> label > input[type="time"]) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 16px;
+  align-items: end;
+  width: 100%;
+  min-width: 0;
+}
+form:has(input[type="time"]) > button,
+form:has(input[type="time"]) > [class*="actions"],
+.main :where(div, section):has(> label > input[type="time"]) > button,
+.main :where(div, section):has(> label > input[type="time"]) > [class*="actions"] {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+form label:has(> input:not([type="checkbox"]):not([type="radio"])),
+form label:has(> select),
+form label:has(> textarea) {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+form label > input:not([type="checkbox"]):not([type="radio"]),
+form label > select,
+form label > textarea { width: 100%; min-width: 0; font-size: 14px; color: var(--text); }
+
+input[type="time"], input[type="date"] { min-width: 0; }
+
+/* ---------- Mobile drawer ---------- */
+@media (max-width: 650px) {
+  .sidebar { padding: 20px 16px; overflow-x: hidden; overflow-y: auto; }
+  .sidebar .logo { padding-top: 48px; }          /* clears the menu button */
+  .sidebar nav { flex-direction: column; overflow: visible; gap: 4px; }
+  .sidebar nav button, .sidebar nav a { width: 100%; white-space: normal; }
+  .nav-item.active { box-shadow: inset 3px 0 0 var(--accent); }
+  .sidebar-bottom { display: block; }
+
+  /* `main` padding was being overridden by `.main` */
+  .main, main { padding: 72px 16px 40px; }
+
+  .app { overflow-x: hidden; }
 }
