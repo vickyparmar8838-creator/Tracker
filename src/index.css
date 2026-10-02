@@ -9,6 +9,7 @@
 /* ---------- Tokens ---------- */
 :root {
   --bg: #0b0e14;
+  --input-bg: #0c1118;
   --surface: #121722;
   --surface-2: #171d2a;
   --surface-3: #1e2636;
@@ -299,7 +300,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   padding: 11px 14px;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
-  background: #0c1118;
+  background: var(--input-bg);
   color: var(--text);
   outline: none;
   transition: border-color var(--ease), box-shadow var(--ease);
@@ -676,7 +677,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .unit-header strong { display: block; margin-bottom: 4px; }
 .unit-header span { color: var(--muted); font-size: 13px; }
 
-.unit-topics { padding: 8px 14px 14px; border-top: 1px solid var(--border); background: rgba(7, 10, 15, 0.25); }
+.unit-topics { padding: 8px 14px 14px; border-top: 1px solid var(--border); background: var(--surface-2); }
 
 .syllabus-topic {
   min-width: 0;
@@ -1169,6 +1170,7 @@ label:has(> select) {
 /* Light theme */
 :root[data-studytrack-theme="light"] {
   --bg: #f4f7fb;
+  --input-bg: #ffffff;
   --surface: #ffffff;
   --surface-2: #f8faff;
   --surface-3: #eef2ff;
@@ -1495,7 +1497,7 @@ body {
 /* ---------- Unit cards ---------- */
 
 .unit-card {
-  box-shadow: 0 5px 20px rgba(0,0,0,.08);
+  box-shadow: 0 5px 20px rgba(108, 106, 106, 0.08);
 }
 
 .unit-header {
