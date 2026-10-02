@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import "./index.css";
 
@@ -17,22 +17,10 @@ const DEFAULT_SETTINGS = {
   studentName: "",
   defaultBenchmark: 75,
   warningThreshold: 75,
+  dailyStudyGoal: 180,
   theme: "dark",
 };
 
-// =========================================================
-// SYLLABUS PARSER (IET DAVV B.Tech I-year, scheme wef July 2024)
-//
-//  1. Strip the repeating page header so units spanning pages stay intact.
-//  2. Every "UNIT-I" starts the content block of one course
-//     (the scheme table on page 2 has no "Unit" text, so it is ignored).
-//  3. Blocks are assigned to courses by order in the document, because some
-//     course headers are printed AFTER their content and one code differs
-//     (R2SES3 vs 2RCES3).
-//  4. Workshop Practice has no units, so it is built from its trade-shop list.
-// =========================================================
-
-// Courses in the order their detail pages appear in the PDF.
 const COURSES = [
   { semester: 1, code: "1RABS1", name: "Applied Mathematics-I" },
   { semester: 1, code: "1RABS2", name: "Applied Chemistry & Environment Science" },
@@ -74,7 +62,7 @@ function normalizeText(text) {
 
 function cleanTopic(text) {
   return text
-    .replace(/^[•●▪◦*\-–—:,.\s]+/, "")
+    .replace(/^[•●▪◦*\-–—:,\.\s]+/, "")
     .replace(/^\d+[.)]\s*/, "")
     .replace(/[\s.,;:]+$/, "")
     .replace(/\s+/g, " ")
@@ -82,13 +70,10 @@ function cleanTopic(text) {
 }
 
 function splitUnitTopics(text) {
-  // Split on ";", on " - " / " – " separators, and on sentence ends
-  // (but not "i.e. Pp").
   const parts = text
     .split(/;|\s[-–—]\s|(?<!\.[a-z])\.\s+(?=[A-Z])/)
     .map(cleanTopic)
     .filter((t) => t.length > 2);
-
   return parts.length ? parts : [cleanTopic(text)].filter(Boolean);
 }
 
@@ -103,14 +88,13 @@ function cutAtStopWords(text) {
 
 function parseUnits(blockText, code) {
   const matches = [...blockText.matchAll(UNIT_REGEX)];
-
   return matches
     .map((m, i) => {
       const start = m.index + m[0].length;
-      const end = i + 1 < matches.length ? matches[i + 1].index : blockText.length;
+      const end =
+        i + 1 < matches.length ? matches[i + 1].index : blockText.length;
       const content = cutAtStopWords(blockText.slice(start, end));
       const unitId = `${code}-u${m[1]}`;
-
       return {
         id: unitId,
         name: `Unit ${m[1]}`,
@@ -128,16 +112,12 @@ function parseWorkshop(text, course) {
   const shops = [];
   const re =
     /Introduction of and practice work on the (Fitting|Carpentry|Welding|Foundry|Machine|Plumbing)/g;
-
   for (const m of text.matchAll(re)) {
     const name = `${m[1]} shop`;
     if (!shops.includes(name)) shops.push(name);
   }
-
   if (shops.length === 0) return null;
-
   const unitId = `${course.code}-uShops`;
-
   return {
     id: course.code,
     code: course.code,
@@ -159,29 +139,22 @@ function parseWorkshop(text, course) {
 function parseWholeSyllabus(rawText) {
   const text = normalizeText(rawText);
   const warnings = [];
-
   const starts = [...text.matchAll(/\b(?:UNIT|Unit)\s*[-–—]?\s*I\b/g)].map(
     (m) => m.index
   );
-
   const blocks = starts.map((s, i) =>
     text.slice(s, i + 1 < starts.length ? starts[i + 1] : text.length)
   );
-
   const unitCourses = COURSES.filter((c) => !c.noUnits);
-
   if (blocks.length !== unitCourses.length) {
     warnings.push(
       `Expected ${unitCourses.length} subjects with units but found ${blocks.length}. Some subjects may be missing or misnamed.`
     );
   }
-
   const syllabus = { semester1: [], semester2: [] };
   let blockIndex = 0;
-
   for (const course of COURSES) {
     let subject = null;
-
     if (course.noUnits) {
       subject = parseWorkshop(text, course);
     } else if (blockIndex < blocks.length) {
@@ -195,44 +168,56 @@ function parseWholeSyllabus(rawText) {
         };
       }
     }
-
     if (subject) {
       syllabus[course.semester === 1 ? "semester1" : "semester2"].push(subject);
     } else {
       warnings.push(`Could not read ${course.name}.`);
     }
   }
-
   return { syllabus, warnings };
 }
 
-// =========================================================
-// APP
-// =========================================================
+function getLocalDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatStudyTime(minutes) {
+  const safe = Math.max(0, Math.round(Number(minutes) || 0));
+  const hours = Math.floor(safe / 60);
+  const mins = safe % 60;
+  if (hours === 0) return `${mins}m`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
+}
 
 function App() {
   const [page, setPage] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [subjects, setSubjects] = useState(() => {
-    const saved = localStorage.getItem("studytrack-subjects");
-    return saved ? JSON.parse(saved) : DEFAULT_SUBJECTS;
+    try {
+      const saved = localStorage.getItem("studytrack-subjects");
+      return saved ? JSON.parse(saved) : DEFAULT_SUBJECTS;
+    } catch {
+      return DEFAULT_SUBJECTS;
+    }
   });
 
-  /*
-   * Syllabus structure:
-   * { semester1: [{ id, name, code, units: [{ id, name, topics: [{ id, name, completed }] }] }],
-   *   semester2: [...] }
-   */
   const [syllabus, setSyllabus] = useState(() => {
-    const saved = localStorage.getItem("studytrack-full-syllabus");
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem("studytrack-full-syllabus");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
 
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newBenchmark, setNewBenchmark] = useState(75);
-
   const [selectedSyllabusSubject, setSelectedSyllabusSubject] = useState(null);
   const [expandedUnits, setExpandedUnits] = useState({});
   const [newTopic, setNewTopic] = useState("");
@@ -248,8 +233,12 @@ function App() {
   ];
 
   const [timetable, setTimetable] = useState(() => {
-    const saved = localStorage.getItem("studytrack-timetable");
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem("studytrack-timetable");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [showTimetableForm, setShowTimetableForm] = useState(false);
@@ -264,11 +253,35 @@ function App() {
   });
 
   const [settings, setSettings] = useState(() => {
-    const saved = localStorage.getItem("studytrack-settings");
-    return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+    try {
+      const saved = localStorage.getItem("studytrack-settings");
+      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
   });
 
   const [importingBackup, setImportingBackup] = useState(false);
+
+  // =========================================================
+  // PRODUCTIVITY / FOCUS
+  // =========================================================
+
+  const [studySessions, setStudySessions] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("studytrack-sessions") || "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  const [focusSeconds, setFocusSeconds] = useState(25 * 60);
+  const [focusRunning, setFocusRunning] = useState(false);
+  const [focusSubject, setFocusSubject] = useState("");
+  const [focusMode, setFocusMode] = useState("focus");
+
+  const FOCUS_DURATION = 25 * 60;
+  const BREAK_DURATION = 5 * 60;
 
   useEffect(() => {
     localStorage.setItem("studytrack-subjects", JSON.stringify(subjects));
@@ -286,6 +299,44 @@ function App() {
     localStorage.setItem("studytrack-settings", JSON.stringify(settings));
     document.documentElement.dataset.studytrackTheme = settings.theme;
   }, [settings]);
+
+  useEffect(() => {
+    localStorage.setItem("studytrack-sessions", JSON.stringify(studySessions));
+  }, [studySessions]);
+
+  useEffect(() => {
+    if (!focusRunning) return undefined;
+
+    const timer = setInterval(() => {
+      setFocusSeconds((prev) => {
+        if (prev <= 1) {
+          setFocusRunning(false);
+
+          if (focusMode === "focus") {
+            setStudySessions((sessions) => [
+              ...sessions,
+              {
+                id: Date.now(),
+                date: getLocalDateKey(),
+                subject: focusSubject || "General Study",
+                duration: 25,
+                type: "focus",
+              },
+            ]);
+            setFocusMode("break");
+            return BREAK_DURATION;
+          }
+
+          setFocusMode("focus");
+          return FOCUS_DURATION;
+        }
+
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [focusRunning, focusMode, focusSubject]);
 
   // =========================================================
   // ATTENDANCE
@@ -305,7 +356,7 @@ function App() {
 
     setSubjects((prev) => [...prev, newSubject]);
     setNewName("");
-    setNewBenchmark(75);
+    setNewBenchmark(Number(settings.defaultBenchmark) || 75);
     setShowAdd(false);
   }
 
@@ -313,7 +364,6 @@ function App() {
     setSubjects((prev) =>
       prev.map((subject) => {
         if (subject.id !== id) return subject;
-
         return {
           ...subject,
           present: type === "present" ? subject.present + 1 : subject.present,
@@ -337,7 +387,18 @@ function App() {
   }
 
   function deleteSubject(id) {
+    const subject = subjects.find((item) => item.id === id);
     setSubjects((prev) => prev.filter((subject) => subject.id !== id));
+
+    if (subject) {
+      setStudySessions((prev) =>
+        prev.map((session) =>
+          session.subject === subject.name
+            ? { ...session, subject: "General Study" }
+            : session
+        )
+      );
+    }
   }
 
   function getPercentage(subject) {
@@ -354,7 +415,6 @@ function App() {
     const P = subject.present;
     const T = subject.present + subject.absent;
     const B = subject.benchmark / 100;
-
     return Math.ceil((B * T - P) / (1 - B));
   }
 
@@ -366,7 +426,6 @@ function App() {
     const P = subject.present;
     const T = subject.present + subject.absent;
     const B = subject.benchmark / 100;
-
     return Math.floor(P / B - T);
   }
 
@@ -391,7 +450,6 @@ function App() {
     if (!file) throw new Error("No PDF file selected.");
 
     const arrayBuffer = await file.arrayBuffer();
-
     if (!arrayBuffer || arrayBuffer.byteLength === 0) {
       throw new Error("The selected PDF file is empty.");
     }
@@ -410,7 +468,6 @@ function App() {
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         const pdfPage = await pdf.getPage(pageNumber);
         const content = await pdfPage.getTextContent();
-
         const text = content.items.map((item) => item?.str || "").join(" ");
         pages.push(text);
       }
@@ -446,7 +503,6 @@ function App() {
     try {
       const text = await extractPdfText(file);
       const { syllabus: parsed, warnings } = parseWholeSyllabus(text);
-
       const allSubjects = [...parsed.semester1, ...parsed.semester2];
       const totalSubjects = allSubjects.length;
       const totalUnits = allSubjects.reduce(
@@ -518,7 +574,6 @@ function App() {
     } else {
       resetTimetableForm();
     }
-
     setShowTimetableForm(true);
   }
 
@@ -568,7 +623,6 @@ function App() {
   function getSubjectProgress(subject) {
     const topics = subject.units.flatMap((unit) => unit.topics);
     if (topics.length === 0) return 0;
-
     const completed = topics.filter((topic) => topic.completed).length;
     return Math.round((completed / topics.length) * 100);
   }
@@ -659,17 +713,158 @@ function App() {
   }
 
   // =========================================================
+  // PRODUCTIVITY HELPERS
+  // =========================================================
+
+  const todayKey = getLocalDateKey();
+
+  const todayStudyMinutes = useMemo(
+    () =>
+      studySessions
+        .filter((session) => session.date === todayKey)
+        .reduce((total, session) => total + Number(session.duration || 0), 0),
+    [studySessions, todayKey]
+  );
+
+  const totalStudyMinutes = useMemo(
+    () =>
+      studySessions.reduce(
+        (total, session) => total + Number(session.duration || 0),
+        0
+      ),
+    [studySessions]
+  );
+
+  const weeklyStudyMinutes = useMemo(() => {
+    const today = new Date();
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - 6);
+
+    return studySessions
+      .filter((session) => {
+        const sessionDate = new Date(`${session.date}T12:00:00`);
+        return sessionDate >= weekStart;
+      })
+      .reduce((total, session) => total + Number(session.duration || 0), 0);
+  }, [studySessions]);
+
+  const studyStreak = useMemo(() => {
+    const dates = new Set(studySessions.map((session) => session.date));
+    let streak = 0;
+    const current = new Date();
+
+    while (dates.has(getLocalDateKey(current))) {
+      streak++;
+      current.setDate(current.getDate() - 1);
+    }
+
+    return streak;
+  }, [studySessions]);
+
+  const subjectStudyTotals = useMemo(
+    () =>
+      subjects.map((subject) => ({
+        name: subject.name,
+        minutes: studySessions
+          .filter((session) => session.subject === subject.name)
+          .reduce(
+            (total, session) => total + Number(session.duration || 0),
+            0
+          ),
+      })),
+    [subjects, studySessions]
+  );
+
+  const maxSubjectStudyMinutes = Math.max(
+    ...subjectStudyTotals.map((item) => item.minutes),
+    1
+  );
+
+  function resetFocusTimer() {
+    setFocusRunning(false);
+    setFocusMode("focus");
+    setFocusSeconds(FOCUS_DURATION);
+  }
+
+  function startFocusTimer() {
+    setFocusRunning(true);
+  }
+
+  function pauseFocusTimer() {
+    setFocusRunning(false);
+  }
+
+  function finishFocusSession() {
+    const elapsedSeconds = FOCUS_DURATION - focusSeconds;
+
+    if (focusMode === "break") {
+      resetFocusTimer();
+      return;
+    }
+
+    if (elapsedSeconds < 60) {
+      alert("Study for at least 1 minute before finishing the session.");
+      return;
+    }
+
+    const duration = Math.max(1, Math.round(elapsedSeconds / 60));
+
+    setStudySessions((sessions) => [
+      ...sessions,
+      {
+        id: Date.now(),
+        date: getLocalDateKey(),
+        subject: focusSubject || "General Study",
+        duration,
+        type: "focus",
+      },
+    ]);
+
+    resetFocusTimer();
+  }
+
+  function startBreak() {
+    setFocusRunning(false);
+    setFocusMode("break");
+    setFocusSeconds(BREAK_DURATION);
+    setFocusRunning(true);
+  }
+
+  function clearStudyHistory() {
+    if (!studySessions.length) return;
+
+    const confirmed = window.confirm(
+      "Clear all recorded study sessions? This cannot be undone."
+    );
+
+    if (confirmed) {
+      setStudySessions([]);
+      resetFocusTimer();
+    }
+  }
+
+  // =========================================================
   // DASHBOARD
   // =========================================================
 
   function Dashboard() {
+    const goal = Math.max(1, Number(settings.dailyStudyGoal) || 180);
+    const goalProgress = Math.min(100, (todayStudyMinutes / goal) * 100);
+    const greeting =
+      new Date().getHours() < 12
+        ? "Good morning"
+        : new Date().getHours() < 18
+        ? "Good afternoon"
+        : "Good evening";
+
     return (
       <>
-        <div className="page-header">
-          <div>
-            <h1>Good morning 👋</h1>
-            <p>Here is your academic overview.</p>
-          </div>
+        <div className="dashboard-welcome">
+          <h2>
+            {greeting}
+            {settings.studentName ? `, ${settings.studentName}` : ""} 👋
+          </h2>
+          <p>Stay consistent. Small sessions add up.</p>
         </div>
 
         <div className="stats-grid">
@@ -677,48 +872,271 @@ function App() {
             <span>Overall Attendance</span>
             <strong>{overallAttendance()}%</strong>
           </div>
-
           <div className="stat-card">
             <span>Syllabus Progress</span>
             <strong>{getOverallSyllabusProgress()}%</strong>
           </div>
-
           <div className="stat-card">
-            <span>Subjects</span>
-            <strong>{subjects.length}</strong>
+            <span>Today's Study</span>
+            <strong>{formatStudyTime(todayStudyMinutes)}</strong>
           </div>
-
           <div className="stat-card">
-            <span>Needs Attention</span>
-            <strong>
-              {
-                subjects.filter(
-                  (subject) => getPercentage(subject) < subject.benchmark
-                ).length
-              }
-            </strong>
+            <span>Study Streak</span>
+            <strong>🔥 {studyStreak}</strong>
+          </div>
+        </div>
+
+        <div className="productivity-grid">
+          <section className="focus-card">
+            <div className="focus-header">
+              <div>
+                <h2>Focus Mode</h2>
+                <p>25 minutes of focused study. Your completed sessions are logged automatically.</p>
+              </div>
+              <span>{focusRunning ? "🟢 Active" : "Ready"}</span>
+            </div>
+
+            <div className="focus-timer">
+              <div className="focus-time">
+                {String(Math.floor(focusSeconds / 60)).padStart(2, "0")}:
+                {String(focusSeconds % 60).padStart(2, "0")}
+              </div>
+            </div>
+
+            <div className="focus-mode">
+              {focusMode === "focus"
+                ? "25 minute focus session"
+                : "5 minute break"}
+            </div>
+
+            <div className="focus-subject">
+              <select
+                value={focusSubject}
+                onChange={(e) => setFocusSubject(e.target.value)}
+                disabled={focusRunning}
+              >
+                <option value="">General Study</option>
+                {subjects.map((subject) => (
+                  <option key={subject.id} value={subject.name}>
+                    {subject.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="focus-controls">
+              {!focusRunning ? (
+                <button className="primary-button" onClick={startFocusTimer}>
+                  ▶ Start
+                </button>
+              ) : (
+                <button className="secondary-button" onClick={pauseFocusTimer}>
+                  ⏸ Pause
+                </button>
+              )}
+
+              <button
+                className="secondary-button"
+                onClick={finishFocusSession}
+                disabled={
+                  !focusRunning && focusSeconds === FOCUS_DURATION
+                }
+              >
+                ✓ Finish
+              </button>
+
+              <button className="secondary-button" onClick={resetFocusTimer}>
+                ↻ Reset
+              </button>
+
+              <button className="secondary-button" onClick={startBreak}>
+                ☕ Break
+              </button>
+            </div>
+          </section>
+
+          <div className="productivity-side">
+            <div className="productivity-mini-card">
+              <span className="mini-label">Daily Goal</span>
+              <strong className="mini-value">
+                {formatStudyTime(todayStudyMinutes)}
+              </strong>
+              <span className="mini-sub">
+                Goal: {formatStudyTime(goal)}
+              </span>
+              <div className="small-progress">
+                <div style={{ width: `${goalProgress}%` }} />
+              </div>
+            </div>
+
+            <div className="productivity-mini-card">
+              <span className="mini-label">This Week</span>
+              <strong className="mini-value">
+                {formatStudyTime(weeklyStudyMinutes)}
+              </strong>
+              <span className="mini-sub">Last 7 days</span>
+            </div>
+
+            <div className="productivity-mini-card streak-card">
+              <span className="mini-label">Current Streak</span>
+              <strong className="mini-value">
+                <span className="streak-fire">🔥</span> {studyStreak}{" "}
+                {studyStreak === 1 ? "day" : "days"}
+              </strong>
+              <span className="mini-sub">Consecutive study days</span>
+            </div>
           </div>
         </div>
 
         <section className="panel">
           <div className="panel-header">
-            <h2>Subject Overview</h2>
+            <div>
+              <h2>Subject Overview</h2>
+              <p>Keep an eye on attendance and study time.</p>
+            </div>
           </div>
 
           <div className="dashboard-subjects">
-            {subjects.map((subject) => (
-              <div className="dashboard-subject" key={subject.id}>
-                <div>
-                  <strong>{subject.name}</strong>
-                  <span>Attendance: {getPercentage(subject)}%</span>
-                </div>
+            {subjects.map((subject) => {
+              const studyTime =
+                subjectStudyTotals.find((item) => item.name === subject.name)
+                  ?.minutes || 0;
 
-                <div className="dashboard-attendance">
-                  {getPercentage(subject)}%
+              return (
+                <div className="dashboard-subject" key={subject.id}>
+                  <div>
+                    <strong>{subject.name}</strong>
+                    <span>
+                      Attendance: {getPercentage(subject)}% · Study:{" "}
+                      {formatStudyTime(studyTime)}
+                    </span>
+                  </div>
+                  <div className="dashboard-attendance">
+                    {getPercentage(subject)}%
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+        </section>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))",
+            gap: "20px",
+            marginTop: "20px",
+          }}
+        >
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h2>Study by Subject</h2>
+                <p>Where your study time is going.</p>
+              </div>
+            </div>
+
+            {studySessions.length === 0 ? (
+              <p className="empty">
+                Start a focus session to see your study distribution.
+              </p>
+            ) : (
+              subjectStudyTotals.map((item) => (
+                <div className="study-subject-row" key={item.name}>
+                  <div className="study-subject-header">
+                    <span>{item.name}</span>
+                    <strong>{formatStudyTime(item.minutes)}</strong>
+                  </div>
+                  <div className="study-subject-bar">
+                    <div
+                      style={{
+                        width: `${
+                          (item.minutes / maxSubjectStudyMinutes) * 100
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))
+            )}
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h2>Achievements</h2>
+                <p>Your StudyTrack milestones.</p>
+              </div>
+            </div>
+
+            <div className="achievement-grid">
+              <div className={`achievement ${totalStudyMinutes < 60 ? "locked" : ""}`}>
+                <span className="achievement-icon">⏱️</span>
+                <strong>First Hour</strong>
+              </div>
+              <div className={`achievement ${studyStreak < 3 ? "locked" : ""}`}>
+                <span className="achievement-icon">🔥</span>
+                <strong>3 Day Streak</strong>
+              </div>
+              <div className={`achievement ${totalStudyMinutes < 600 ? "locked" : ""}`}>
+                <span className="achievement-icon">📚</span>
+                <strong>10 Hours</strong>
+              </div>
+              <div className={`achievement ${studyStreak < 7 ? "locked" : ""}`}>
+                <span className="achievement-icon">🏆</span>
+                <strong>7 Day Streak</strong>
+              </div>
+              <div className={`achievement ${totalStudyMinutes < 3000 ? "locked" : ""}`}>
+                <span className="achievement-icon">🚀</span>
+                <strong>50 Hours</strong>
+              </div>
+              <div
+                className={`achievement ${
+                  todayStudyMinutes < goal ? "locked" : ""
+                }`}
+              >
+                <span className="achievement-icon">🎯</span>
+                <strong>Daily Goal</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section className="panel" style={{ marginTop: "20px" }}>
+          <div className="panel-header">
+            <div>
+              <h2>Recent Study Sessions</h2>
+              <p>Your latest focus sessions.</p>
+            </div>
+            {studySessions.length > 0 && (
+              <button className="danger-text" onClick={clearStudyHistory}>
+                Clear History
+              </button>
+            )}
+          </div>
+
+          {studySessions.length === 0 ? (
+            <p className="empty">No study sessions yet.</p>
+          ) : (
+            <div className="study-history">
+              {[...studySessions]
+                .slice(-7)
+                .reverse()
+                .map((session) => (
+                  <div className="study-history-row" key={session.id}>
+                    <div>
+                      <strong>{session.subject}</strong>
+                      <div className="study-history-date">
+                        {session.date}
+                      </div>
+                    </div>
+                    <div className="study-history-time">
+                      {formatStudyTime(session.duration)}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </section>
       </>
     );
@@ -736,7 +1154,6 @@ function App() {
             <h1>Attendance</h1>
             <p>Track attendance for every subject.</p>
           </div>
-
           <button
             className="primary-button"
             onClick={() => setShowAdd(!showAdd)}
@@ -748,14 +1165,12 @@ function App() {
         {showAdd && (
           <div className="panel add-form">
             <h2>Add Subject</h2>
-
             <input
               type="text"
               placeholder="Subject name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
-
             <input
               type="number"
               min="0"
@@ -764,7 +1179,6 @@ function App() {
               value={newBenchmark}
               onChange={(e) => setNewBenchmark(e.target.value)}
             />
-
             <button className="primary-button" onClick={addSubject}>
               Add Subject
             </button>
@@ -784,7 +1198,6 @@ function App() {
                     <h2>{subject.name}</h2>
                     <span>{subject.present + subject.absent} total classes</span>
                   </div>
-
                   <button
                     className="danger-text"
                     onClick={() => deleteSubject(subject.id)}
@@ -795,7 +1208,6 @@ function App() {
 
                 <div className="attendance-main">
                   <div className="big-percentage">{percentage}%</div>
-
                   <p
                     className={
                       percentage >= subject.benchmark
@@ -849,7 +1261,6 @@ function App() {
                   >
                     + Present
                   </button>
-
                   <button
                     className="absent-button"
                     onClick={() => markAttendance(subject.id, "absent")}
@@ -903,7 +1314,6 @@ function App() {
           >
             <strong>{subject.name}</strong>
             <span>{getSubjectProgress(subject)}%</span>
-
             <div className="small-progress">
               <div style={{ width: `${getSubjectProgress(subject)}%` }} />
             </div>
@@ -929,10 +1339,8 @@ function App() {
             <h1>Syllabus</h1>
             <p>Track your complete college syllabus.</p>
           </div>
-
           <label className="pdf-upload-button">
             {uploadingPdf ? "Reading PDF..." : "📄 Upload Complete Syllabus"}
-
             <input
               type="file"
               accept=".pdf,application/pdf"
@@ -945,15 +1353,12 @@ function App() {
         {!syllabus ? (
           <div className="panel empty-state">
             <div className="empty-icon">📚</div>
-
             <h2>Upload your syllabus</h2>
-
             <p>
               Upload the complete IET DAVV syllabus PDF once. The app will
               separate Semester I, Semester II, subjects, units and topics
               automatically.
             </p>
-
             <label className="pdf-upload-button">
               📄 Choose PDF
               <input
@@ -970,9 +1375,10 @@ function App() {
                 <span>Overall Syllabus Progress</span>
                 <strong>{getOverallSyllabusProgress()}%</strong>
               </div>
-
               <div className="large-progress">
-                <div style={{ width: `${getOverallSyllabusProgress()}%` }} />
+                <div
+                  style={{ width: `${getOverallSyllabusProgress()}%` }}
+                />
               </div>
             </div>
 
@@ -981,7 +1387,6 @@ function App() {
                 <h2>Semester I</h2>
                 {renderSemesterSubjects(syllabus.semester1)}
               </div>
-
               <div>
                 <h2>Semester II</h2>
                 {renderSemesterSubjects(syllabus.semester2)}
@@ -995,13 +1400,14 @@ function App() {
                     <h2>{selectedSubject.name}</h2>
                     <span>{selectedSubject.code}</span>
                   </div>
-
                   <strong>{getSubjectProgress(selectedSubject)}%</strong>
                 </div>
 
                 <div className="large-progress">
                   <div
-                    style={{ width: `${getSubjectProgress(selectedSubject)}%` }}
+                    style={{
+                      width: `${getSubjectProgress(selectedSubject)}%`,
+                    }}
                   />
                 </div>
 
@@ -1023,8 +1429,9 @@ function App() {
                               {completed} / {unit.topics.length} completed
                             </span>
                           </div>
-
-                          <span>{expandedUnits[unit.id] ? "▲" : "▼"}</span>
+                          <span>
+                            {expandedUnits[unit.id] ? "▲" : "▼"}
+                          </span>
                         </button>
 
                         {expandedUnits[unit.id] && (
@@ -1047,7 +1454,6 @@ function App() {
                                     )
                                   }
                                 />
-
                                 <span>{topic.name}</span>
                               </label>
                             ))}
@@ -1059,11 +1465,13 @@ function App() {
                                 value={newTopic}
                                 onChange={(e) => setNewTopic(e.target.value)}
                               />
-
                               <button
                                 className="secondary-button"
                                 onClick={() =>
-                                  addManualTopic(selectedSubject.id, unit.id)
+                                  addManualTopic(
+                                    selectedSubject.id,
+                                    unit.id
+                                  )
                                 }
                               >
                                 + Add
@@ -1089,7 +1497,6 @@ function App() {
 
   function Timetable() {
     const totalClasses = timetable.length;
-
     const cardStyle = {
       background: "rgba(255,255,255,0.04)",
       border: "1px solid rgba(255,255,255,0.08)",
@@ -1107,8 +1514,10 @@ function App() {
             <h1>Timetable</h1>
             <p>Plan your weekly classes in one place.</p>
           </div>
-
-          <button className="primary-button" onClick={() => openTimetableForm()}>
+          <button
+            className="primary-button"
+            onClick={() => openTimetableForm()}
+          >
             + Add Class
           </button>
         </div>
@@ -1258,11 +1667,16 @@ function App() {
               const entries = getDayEntries(day);
 
               return (
-                <section key={day} className="panel" style={{ margin: 0 }}>
+                <section
+                  key={day}
+                  className="panel"
+                  style={{ margin: 0 }}
+                >
                   <div className="panel-header">
                     <h2>{day}</h2>
                     <span>
-                      {entries.length} class{entries.length === 1 ? "" : "es"}
+                      {entries.length} class
+                      {entries.length === 1 ? "" : "es"}
                     </span>
                   </div>
 
@@ -1273,23 +1687,36 @@ function App() {
                   ) : (
                     <div style={{ display: "grid", gap: "12px" }}>
                       {entries.map((entry) => (
-                        <div key={entry.id} style={cardStyle}>
-                          <div style={{ fontWeight: 700, fontSize: "16px" }}>
+                        <div
+                          key={entry.id}
+                          className="class-item"
+                          style={cardStyle}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 700,
+                              fontSize: "16px",
+                            }}
+                          >
                             {entry.subject}
                           </div>
+
                           <div style={{ marginTop: "7px", opacity: 0.85 }}>
                             🕐 {entry.startTime} – {entry.endTime}
                           </div>
+
                           {entry.room && (
                             <div style={{ marginTop: "5px", opacity: 0.75 }}>
                               📍 {entry.room}
                             </div>
                           )}
+
                           {entry.teacher && (
                             <div style={{ marginTop: "5px", opacity: 0.75 }}>
                               👨‍🏫 {entry.teacher}
                             </div>
                           )}
+
                           <div
                             style={{
                               display: "flex",
@@ -1334,23 +1761,23 @@ function App() {
   function exportBackup() {
     const backup = {
       app: "StudyTrack",
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       subjects,
       syllabus,
       timetable,
       settings,
+      studySessions,
     };
 
     const blob = new Blob([JSON.stringify(backup, null, 2)], {
       type: "application/json",
     });
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `studytrack-backup-${new Date()
-      .toISOString()
-      .slice(0, 10)}.json`;
+    link.download = `studytrack-backup-${getLocalDateKey()}.json`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -1380,8 +1807,16 @@ function App() {
         setSubjects(backup.subjects);
         setSyllabus(backup.syllabus || null);
         setTimetable(Array.isArray(backup.timetable) ? backup.timetable : []);
-        setSettings(backup.settings || DEFAULT_SETTINGS);
+        setSettings({
+          ...DEFAULT_SETTINGS,
+          ...(backup.settings || {}),
+        });
+        setStudySessions(
+          Array.isArray(backup.studySessions) ? backup.studySessions : []
+        );
         setPage("dashboard");
+        resetFocusTimer();
+
         alert("Backup imported successfully!");
       } catch (error) {
         alert(`Could not import backup.\n\n${error.message || String(error)}`);
@@ -1396,7 +1831,7 @@ function App() {
 
   function resetAllData() {
     const confirmed = window.confirm(
-      "Reset StudyTrack? This will permanently remove your attendance, syllabus, timetable and settings from this browser."
+      "Reset StudyTrack? This will permanently remove your attendance, syllabus, timetable, study history and settings from this browser."
     );
 
     if (!confirmed) return;
@@ -1405,19 +1840,23 @@ function App() {
     setSyllabus(null);
     setTimetable([]);
     setSettings(DEFAULT_SETTINGS);
+    setStudySessions([]);
     setNewBenchmark(75);
     setPage("dashboard");
+    resetFocusTimer();
 
     localStorage.removeItem("studytrack-subjects");
     localStorage.removeItem("studytrack-full-syllabus");
     localStorage.removeItem("studytrack-timetable");
     localStorage.removeItem("studytrack-settings");
+    localStorage.removeItem("studytrack-sessions");
 
     alert("StudyTrack has been reset.");
   }
 
   function Settings() {
     const clamp = (value) => Math.min(100, Math.max(0, Number(value)));
+    const goal = Math.max(1, Number(settings.dailyStudyGoal) || 180);
 
     return (
       <>
@@ -1428,7 +1867,13 @@ function App() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gap: "20px", maxWidth: "900px" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: "20px",
+            maxWidth: "900px",
+          }}
+        >
           <div className="panel">
             <div className="panel-header">
               <div>
@@ -1436,13 +1881,16 @@ function App() {
                 <p>Your name is stored only in this browser for now.</p>
               </div>
             </div>
+
             <label>
               Student name
               <input
                 type="text"
                 placeholder="Enter your name"
                 value={settings.studentName}
-                onChange={(e) => updateSetting("studentName", e.target.value)}
+                onChange={(e) =>
+                  updateSetting("studentName", e.target.value)
+                }
               />
             </label>
           </div>
@@ -1454,10 +1902,12 @@ function App() {
                 <p>These defaults are used for new attendance subjects.</p>
               </div>
             </div>
+
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(220px, 1fr))",
                 gap: "16px",
               }}
             >
@@ -1475,6 +1925,7 @@ function App() {
                   }}
                 />
               </label>
+
               <label>
                 Warning threshold (%)
                 <input
@@ -1483,11 +1934,43 @@ function App() {
                   max="100"
                   value={settings.warningThreshold}
                   onChange={(e) =>
-                    updateSetting("warningThreshold", clamp(e.target.value))
+                    updateSetting(
+                      "warningThreshold",
+                      clamp(e.target.value)
+                    )
                   }
                 />
               </label>
             </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div>
+                <h2>📚 Study Goal</h2>
+                <p>Set how much focused study you want to complete each day.</p>
+              </div>
+            </div>
+
+            <label>
+              Daily study goal (minutes)
+              <input
+                type="number"
+                min="1"
+                max="1440"
+                value={goal}
+                onChange={(e) =>
+                  updateSetting(
+                    "dailyStudyGoal",
+                    Math.min(1440, Math.max(1, Number(e.target.value) || 1))
+                  )
+                }
+              />
+            </label>
+
+            <p style={{ marginTop: "10px", fontSize: "13px", opacity: 0.65 }}>
+              Current goal: {formatStudyTime(goal)} per day.
+            </p>
           </div>
 
           <div className="panel">
@@ -1499,6 +1982,7 @@ function App() {
                 </p>
               </div>
             </div>
+
             <label>
               Theme
               <select
@@ -1509,6 +1993,7 @@ function App() {
                 <option value="light">Light</option>
               </select>
             </label>
+
             <p style={{ marginTop: "10px", fontSize: "13px", opacity: 0.65 }}>
               The theme updates immediately and is remembered on this device.
             </p>
@@ -1519,16 +2004,27 @@ function App() {
               <div>
                 <h2>💾 Backup & Restore</h2>
                 <p>
-                  Save your attendance, syllabus, timetable and settings as one
-                  file.
+                  Save your attendance, syllabus, timetable, study history and
+                  settings as one file.
                 </p>
               </div>
             </div>
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                flexWrap: "wrap",
+              }}
+            >
               <button className="primary-button" onClick={exportBackup}>
                 ⬇️ Export Backup
               </button>
-              <label className="secondary-button" style={{ cursor: "pointer" }}>
+
+              <label
+                className="secondary-button"
+                style={{ cursor: "pointer" }}
+              >
                 {importingBackup ? "Importing..." : "⬆️ Import Backup"}
                 <input
                   type="file"
@@ -1551,6 +2047,7 @@ function App() {
                 <p>This removes all StudyTrack data saved in this browser.</p>
               </div>
             </div>
+
             <button className="danger-text" onClick={resetAllData}>
               Reset all data
             </button>
@@ -1569,7 +2066,9 @@ function App() {
     const totalAbsent = subjects.reduce((sum, s) => sum + s.absent, 0);
     const totalClasses = totalPresent + totalAbsent;
     const overall =
-      totalClasses > 0 ? Math.round((totalPresent / totalClasses) * 100) : 0;
+      totalClasses > 0
+        ? Math.round((totalPresent / totalClasses) * 100)
+        : 0;
 
     const subjectStats = subjects.map((s) => ({
       ...s,
@@ -1582,14 +2081,26 @@ function App() {
       count: timetable.filter((entry) => entry.subject === s.name).length,
     }));
 
-    const maxScheduled = Math.max(...scheduledBySubject.map((i) => i.count), 1);
+    const maxScheduled = Math.max(
+      ...scheduledBySubject.map((i) => i.count),
+      1
+    );
 
     const scheduledDays = DAYS.map((day) => ({
       day: day.slice(0, 3),
       count: getDayEntries(day).length,
     }));
 
-    const maxDaily = Math.max(...scheduledDays.map((i) => i.count), 1);
+    const maxDaily = Math.max(
+      ...scheduledDays.map((i) => i.count),
+      1
+    );
+
+    const goal = Math.max(1, Number(settings.dailyStudyGoal) || 180);
+    const goalProgress = Math.min(
+      100,
+      (todayStudyMinutes / goal) * 100
+    );
 
     const track = {
       height: "12px",
@@ -1609,7 +2120,7 @@ function App() {
         <div className="page-header">
           <div>
             <h1>Statistics</h1>
-            <p>See your attendance and timetable performance at a glance.</p>
+            <p>See your attendance, study and timetable performance.</p>
           </div>
         </div>
 
@@ -1619,23 +2130,23 @@ function App() {
             <strong>{overall}%</strong>
           </div>
           <div className="stat-card">
-            <span>Total Classes</span>
-            <strong>{totalClasses}</strong>
+            <span>Total Study Time</span>
+            <strong>{formatStudyTime(totalStudyMinutes)}</strong>
           </div>
           <div className="stat-card">
-            <span>Present</span>
-            <strong>{totalPresent}</strong>
+            <span>This Week</span>
+            <strong>{formatStudyTime(weeklyStudyMinutes)}</strong>
           </div>
           <div className="stat-card">
-            <span>Absent</span>
-            <strong>{totalAbsent}</strong>
+            <span>Study Streak</span>
+            <strong>🔥 {studyStreak}</strong>
           </div>
         </div>
 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(360px,1fr))",
+            gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
             gap: "20px",
             marginTop: "20px",
           }}
@@ -1643,10 +2154,60 @@ function App() {
           <div className="panel">
             <div className="panel-header">
               <div>
+                <h2>Today's Goal</h2>
+                <p>Focused study completed today.</p>
+              </div>
+            </div>
+
+            <div className="big-percentage">
+              {Math.round(goalProgress)}%
+            </div>
+
+            <div className="large-progress" style={{ marginTop: "14px" }}>
+              <div style={{ width: `${goalProgress}%` }} />
+            </div>
+
+            <p style={{ marginTop: "12px", opacity: 0.7 }}>
+              {formatStudyTime(todayStudyMinutes)} of{" "}
+              {formatStudyTime(goal)}
+            </p>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div>
+                <h2>Study by Subject</h2>
+                <p>Your total recorded focus time.</p>
+              </div>
+            </div>
+
+            {subjectStudyTotals.map((item) => (
+              <div className="study-subject-row" key={item.name}>
+                <div className="study-subject-header">
+                  <span>{item.name}</span>
+                  <strong>{formatStudyTime(item.minutes)}</strong>
+                </div>
+                <div className="study-subject-bar">
+                  <div
+                    style={{
+                      width: `${
+                        (item.minutes / maxSubjectStudyMinutes) * 100
+                      }%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div>
                 <h2>Attendance by Subject</h2>
                 <p>Your current attendance percentage.</p>
               </div>
             </div>
+
             {subjectStats.length === 0 ? (
               <p>No subjects available yet.</p>
             ) : (
@@ -1657,6 +2218,7 @@ function App() {
                       <strong>{item.name}</strong>
                       <strong>{item.percentage}%</strong>
                     </div>
+
                     <div style={track}>
                       <div
                         style={{
@@ -1671,8 +2233,13 @@ function App() {
                         }}
                       />
                     </div>
+
                     <div
-                      style={{ marginTop: "6px", fontSize: "12px", opacity: 0.65 }}
+                      style={{
+                        marginTop: "6px",
+                        fontSize: "12px",
+                        opacity: 0.65,
+                      }}
                     >
                       Target: {item.benchmark}%
                     </div>
@@ -1689,6 +2256,7 @@ function App() {
                 <p>Class distribution for each subject.</p>
               </div>
             </div>
+
             {subjectStats.length === 0 ? (
               <p>No attendance data yet.</p>
             ) : (
@@ -1706,6 +2274,7 @@ function App() {
                           {item.present} present · {item.absent} absent
                         </span>
                       </div>
+
                       <div
                         style={{
                           display: "flex",
@@ -1726,6 +2295,7 @@ function App() {
                     </div>
                   );
                 })}
+
                 <div
                   style={{
                     display: "flex",
@@ -1748,6 +2318,7 @@ function App() {
                 <p>Compare your current percentage with your target.</p>
               </div>
             </div>
+
             {subjectStats.length === 0 ? (
               <p>No subjects available yet.</p>
             ) : (
@@ -1760,6 +2331,7 @@ function App() {
                         {item.percentage}% / {item.benchmark}%
                       </span>
                     </div>
+
                     <div
                       style={{
                         position: "relative",
@@ -1779,6 +2351,7 @@ function App() {
                               : "#f59e0b",
                         }}
                       />
+
                       <div
                         style={{
                           position: "absolute",
@@ -1805,6 +2378,7 @@ function App() {
                 <p>Weekly classes from your timetable.</p>
               </div>
             </div>
+
             {timetable.length === 0 ? (
               <p>No timetable classes added yet.</p>
             ) : (
@@ -1817,6 +2391,7 @@ function App() {
                         <strong>{item.name}</strong>
                         <span>{item.count}</span>
                       </div>
+
                       <div style={{ ...track, height: "10px" }}>
                         <div
                           style={{
@@ -1840,6 +2415,7 @@ function App() {
                 <p>How your scheduled classes are spread across the week.</p>
               </div>
             </div>
+
             <div
               style={{
                 display: "grid",
@@ -1866,7 +2442,9 @@ function App() {
                     style={{
                       width: "min(44px,70%)",
                       height: `${Math.max(
-                        item.count ? (item.count / maxDaily) * 120 : 4,
+                        item.count
+                          ? (item.count / maxDaily) * 120
+                          : 4,
                         4
                       )}px`,
                       background: "#22d3ee",
@@ -1880,6 +2458,38 @@ function App() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="panel" style={{ gridColumn: "1 / -1" }}>
+            <div className="panel-header">
+              <div>
+                <h2>Recent Study Sessions</h2>
+                <p>Your latest recorded focus sessions.</p>
+              </div>
+            </div>
+
+            {studySessions.length === 0 ? (
+              <p className="empty">No study sessions recorded yet.</p>
+            ) : (
+              <div className="study-history">
+                {[...studySessions]
+                  .slice(-10)
+                  .reverse()
+                  .map((session) => (
+                    <div className="study-history-row" key={session.id}>
+                      <div>
+                        <strong>{session.subject}</strong>
+                        <div className="study-history-date">
+                          {session.date}
+                        </div>
+                      </div>
+                      <div className="study-history-time">
+                        {formatStudyTime(session.duration)}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         </div>
       </>
@@ -1918,7 +2528,6 @@ function App() {
       <aside className="sidebar">
         <div className="logo">
           <div className="logo-icon">S</div>
-
           <div>
             <strong>StudyTrack</strong>
             <span>Student Dashboard</span>
@@ -1945,7 +2554,9 @@ function App() {
           aria-expanded={mobileNavOpen}
           onClick={() => setMobileNavOpen(true)}
         >
-          <span></span><span></span><span></span>
+          <span></span>
+          <span></span>
+          <span></span>
         </button>
 
         <div key={page} className="page-transition">
