@@ -2171,6 +2171,12 @@ body {
 .pet-cat.walking .cat-bob { animation: cat-step .38s ease-in-out infinite; }
 @keyframes cat-step { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
 
+/* side-view legs: swing in diagonal pairs while the cat walks */
+.cat-leg { transform-box: fill-box; transform-origin: 50% 6%; }
+.pet-cat.walking .cat-leg-a { animation: cat-leg .38s ease-in-out infinite; }
+.pet-cat.walking .cat-leg-b { animation: cat-leg .38s ease-in-out infinite reverse; }
+@keyframes cat-leg { 0%, 100% { transform: rotate(-26deg); } 50% { transform: rotate(26deg); } }
+
 .cat-body {
   display: block;
   width: 100%;
@@ -2190,11 +2196,11 @@ body {
 .cat-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 12px; }
 .cat-body svg { display: block; width: 100%; height: auto; overflow: visible; }
 
-.pet-cat .cat-tail { transform-origin: 92px 88px; animation: cat-wag 2s ease-in-out infinite; }
-.pet-cat .cat-head { transform-origin: 60px 70px; animation: cat-tilt 5s ease-in-out infinite; }
+.pet-cat .cat-tail { transform-origin: 22px 76px; animation: cat-wag 2s ease-in-out infinite; }
+.pet-cat .cat-head { transform-origin: 94px 70px; animation: cat-tilt 5s ease-in-out infinite; }
 .pet-cat .cat-ear { transition: transform .4s ease; }
-.pet-cat .cat-ear-l { transform-origin: 46px 32px; }
-.pet-cat .cat-ear-r { transform-origin: 74px 32px; }
+.pet-cat .cat-ear-l { transform-origin: 82px 36px; }
+.pet-cat .cat-ear-r { transform-origin: 106px 36px; }
 .pet-cat .cat-eyes ellipse {
   transform-box: fill-box;
   transform-origin: center;

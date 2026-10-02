@@ -48,7 +48,7 @@ const PET_DEFAULTS = {
   bubbles: true,
   outfits: true,
   name: "Mochi",
-  coat: "orange",
+  coat: "persian",
   total: 0, // focus sessions finished together (unlocks outfits)
 };
 
@@ -330,6 +330,7 @@ const OUTFITS = [
 ];
 
 const COATS = {
+  persian: { label: "Persian", swatch: "#9ba6bd", body: "#9ba6bd", light: "#cdd4e0", ink: "#5b6478", eye: "#1b1b22", iris: "#f0932b", ear: "#e3a9b4" },
   orange: { label: "Orange", swatch: "#f4a259", body: "#f4a259", light: "#fbc98f", ink: "#7c4a1e", eye: "#1f2937", ear: "#f2a0a0" },
   gray: { label: "Gray", swatch: "#9aa5b1", body: "#9aa5b1", light: "#cfd6dd", ink: "#475569", eye: "#1f2937", ear: "#e7b6c0" },
   black: { label: "Black", swatch: "#374151", body: "#374151", light: "#4b5563", ink: "#cbd5e1", eye: "#fde68a", ear: "#9d6b7b" },
@@ -376,7 +377,7 @@ const CONFETTI = Array.from({ length: 10 }, (_, i) => ({
   delay: `${(i % 4) * 70}ms`,
 }));
 
-const TAIL_PATH = "M92 88 C 120 88, 118 55, 104 52";
+const TAIL_PATH = "M22 76 C 4 80, 0 54, 14 49";
 const BALL_SIZE = 26;
 
 let catGreeted = false; // greet once per page load, not every time you revisit the Dashboard
@@ -434,7 +435,7 @@ function meow() {
 function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday, sound, pet, event }) {
   const { walk, bubbles, outfits, total } = pet;
   const name = (pet.name || "").trim() || PET_DEFAULTS.name;
-  const c = COATS[pet.coat] || COATS.orange;
+  const c = COATS[pet.coat] || COATS.persian;
 
   const [petted, setPetted] = useState(false);
   const [celebrating, setCelebrating] = useState(0); // 0 = no, otherwise an id that restarts the burst
@@ -872,101 +873,133 @@ function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday
           >
             <svg viewBox="0 -16 120 116" aria-hidden="true">
               <defs>
-                <clipPath id="cat-clip-head"><circle cx="60" cy="46" r="28" /></clipPath>
-                <clipPath id="cat-clip-body"><ellipse cx="60" cy="82" rx="34" ry="18" /></clipPath>
+                <clipPath id="cat-clip-head"><ellipse cx="94" cy="50" rx="23" ry="20" /></clipPath>
+                <clipPath id="cat-clip-body"><ellipse cx="54" cy="74" rx="36" ry="16" /></clipPath>
               </defs>
 
+              {/* tail (behind everything, curls up at the back) */}
               <g className="cat-tail">
-                {c.line && <path d={TAIL_PATH} fill="none" stroke={c.line} strokeWidth="11.5" strokeLinecap="round" />}
-                <path d={TAIL_PATH} fill="none" stroke={c.tail || c.body} strokeWidth="9" strokeLinecap="round" />
+                {c.line && <path d={TAIL_PATH} fill="none" stroke={c.line} strokeWidth="13.5" strokeLinecap="round" />}
+                <path d={TAIL_PATH} fill="none" stroke={c.tail || c.body} strokeWidth="11" strokeLinecap="round" />
               </g>
 
-              <ellipse cx="60" cy="82" rx="34" ry="18" fill={c.body} stroke={c.line || "none"} strokeWidth="1.2" />
-              {c.patches && <ellipse cx="84" cy="78" rx="13" ry="9" fill="#374151" clipPath="url(#cat-clip-body)" />}
-              <ellipse cx="44" cy="94" rx="9" ry="5" fill={c.light} />
-              <ellipse cx="76" cy="94" rx="9" ry="5" fill={c.light} />
+              {/* far-side legs (slightly darker) */}
+              <g className="cat-leg cat-leg-b">
+                <rect x="26" y="80" width="8" height="19" rx="4" fill={c.body} stroke={c.line || "none"} strokeWidth="1" />
+                <rect x="26" y="80" width="8" height="19" rx="4" fill="#000" opacity=".16" />
+                <ellipse cx="30" cy="97.5" rx="5.4" ry="2.8" fill={c.light} />
+              </g>
+              <g className="cat-leg cat-leg-a">
+                <rect x="66" y="80" width="8" height="19" rx="4" fill={c.body} stroke={c.line || "none"} strokeWidth="1" />
+                <rect x="66" y="80" width="8" height="19" rx="4" fill="#000" opacity=".16" />
+                <ellipse cx="70" cy="97.5" rx="5.4" ry="2.8" fill={c.light} />
+              </g>
+              {/* near-side legs */}
+              <g className="cat-leg cat-leg-a">
+                <rect x="38" y="80" width="9" height="19" rx="4.5" fill={c.body} stroke={c.line || "none"} strokeWidth="1" />
+                <ellipse cx="42.5" cy="97.5" rx="5.8" ry="3" fill={c.light} />
+              </g>
+              <g className="cat-leg cat-leg-b">
+                <rect x="76" y="80" width="9" height="19" rx="4.5" fill={c.body} stroke={c.line || "none"} strokeWidth="1" />
+                <ellipse cx="80.5" cy="97.5" rx="5.8" ry="3" fill={c.light} />
+              </g>
+
+              {/* body in profile */}
+              <ellipse cx="54" cy="74" rx="36" ry="16" fill={c.body} stroke={c.line || "none"} strokeWidth="1.2" />
+              {c.patches && <ellipse cx="34" cy="70" rx="14" ry="9" fill="#374151" clipPath="url(#cat-clip-body)" />}
+              <ellipse cx="56" cy="84" rx="26" ry="6" fill={c.light} opacity=".75" />
+              {/* fluffy chest ruff under the chin */}
+              <ellipse cx="82" cy="70" rx="14" ry="11" fill={c.body} />
 
               {wearBow && (
                 <g>
-                  <polygon points="60,74 47,67 47,81" fill="#ef4444" />
-                  <polygon points="60,74 73,67 73,81" fill="#ef4444" />
-                  <circle cx="60" cy="74" r="3.6" fill="#b91c1c" />
+                  <polygon points="80,72 69,66 69,78" fill="#ef4444" />
+                  <polygon points="80,72 91,66 91,78" fill="#ef4444" />
+                  <circle cx="80" cy="72" r="3.4" fill="#b91c1c" />
                 </g>
               )}
 
+              {/* head turned to face you */}
               <g className="cat-head">
                 <g className="cat-ear cat-ear-l">
-                  <polygon points="34,34 38,10 54,26" fill={c.earL || c.body} stroke={c.line || "none"} strokeWidth="1" />
-                  <polygon points="39,30 40,17 49,26" fill={c.ear} />
+                  <path d="M72 42 Q70 27 83 28 Q91 29 90 35 Z" fill={c.earL || c.body} stroke={c.line || "none"} strokeWidth="1" />
+                  <path d="M76 38 Q76 31 83 32 Q87 33 87 36 Z" fill={c.ear} />
                 </g>
                 <g className="cat-ear cat-ear-r">
-                  <polygon points="86,34 82,10 66,26" fill={c.earR || c.body} stroke={c.line || "none"} strokeWidth="1" />
-                  <polygon points="81,30 80,17 71,26" fill={c.ear} />
+                  <path d="M116 42 Q118 27 105 28 Q97 29 98 35 Z" fill={c.earR || c.body} stroke={c.line || "none"} strokeWidth="1" />
+                  <path d="M112 38 Q112 31 105 32 Q101 33 101 36 Z" fill={c.ear} />
                 </g>
-                <circle cx="60" cy="46" r="28" fill={c.body} stroke={c.line || "none"} strokeWidth="1.2" />
+                <ellipse cx="76" cy="58" rx="8" ry="7" fill={c.body} stroke={c.line || "none"} strokeWidth="1" />
+                <ellipse cx="112" cy="58" rx="8" ry="7" fill={c.body} stroke={c.line || "none"} strokeWidth="1" />
+                <ellipse cx="94" cy="50" rx="23" ry="20" fill={c.body} stroke={c.line || "none"} strokeWidth="1.2" />
                 {c.patches && (
                   <g clipPath="url(#cat-clip-head)">
-                    <ellipse cx="42" cy="32" rx="13" ry="10" fill="#f4a259" />
-                    <ellipse cx="82" cy="58" rx="12" ry="10" fill="#374151" />
+                    <ellipse cx="80" cy="38" rx="11" ry="8" fill="#f4a259" />
+                    <ellipse cx="108" cy="58" rx="10" ry="8" fill="#374151" />
                   </g>
                 )}
+                <ellipse cx="94" cy="60" rx="11" ry="7" fill={c.light} opacity=".7" />
 
                 <g className="cat-eyes">
-                  <ellipse cx="49" cy="44" rx="4" ry="5" fill={c.eye} />
-                  <ellipse cx="71" cy="44" rx="4" ry="5" fill={c.eye} />
+                  <ellipse cx="85" cy="50" rx="5.5" ry="6" fill={c.iris || c.eye} />
+                  <ellipse cx="85" cy="50.5" rx="2.6" ry="4.2" fill={c.eye} />
+                  <ellipse cx="86.6" cy="47.8" rx="1.3" ry="1.5" fill="#ffffff" />
+                  <ellipse cx="103" cy="50" rx="5.5" ry="6" fill={c.iris || c.eye} />
+                  <ellipse cx="103" cy="50.5" rx="2.6" ry="4.2" fill={c.eye} />
+                  <ellipse cx="104.6" cy="47.8" rx="1.3" ry="1.5" fill="#ffffff" />
                 </g>
                 {wearGlasses && (
                   <g fill="rgba(255,255,255,.18)" stroke="#1f2937" strokeWidth="2">
-                    <circle cx="49" cy="44" r="8.5" />
-                    <circle cx="71" cy="44" r="8.5" />
-                    <line x1="57.5" y1="44" x2="62.5" y2="44" />
+                    <circle cx="85" cy="50" r="7.8" />
+                    <circle cx="103" cy="50" r="7.8" />
+                    <line x1="92.8" y1="50" x2="95.2" y2="50" />
                   </g>
                 )}
                 {mood === "happy" && (
                   <g fill="#f08a8a" opacity=".55">
-                    <ellipse cx="41" cy="54" rx="5" ry="3" />
-                    <ellipse cx="79" cy="54" rx="5" ry="3" />
+                    <ellipse cx="79" cy="58" rx="4.5" ry="2.8" />
+                    <ellipse cx="109" cy="58" rx="4.5" ry="2.8" />
                   </g>
                 )}
-                <path d="M57 53 L63 53 L60 57 Z" fill="#e76f6f" />
+                <path d="M91.5 55.5 L96.5 55.5 Q96.5 58.3 94 59.5 Q91.5 58.3 91.5 55.5 Z" fill="#e58a96" />
 
                 {grumpy || mood === "low" ? (
-                  <path d="M54 64 Q60 58 66 64" fill="none" stroke={c.ink} strokeWidth="1.6" strokeLinecap="round" />
+                  <path d="M89 66 Q94 61 99 66" fill="none" stroke={c.ink} strokeWidth="1.6" strokeLinecap="round" />
                 ) : mood === "ok" ? (
-                  <path d="M60 57 Q57 62 53 60 M60 57 Q63 62 67 60" fill="none" stroke={c.ink} strokeWidth="1.6" strokeLinecap="round" />
+                  <path d="M94 59.5 Q92 64 88.5 62.5 M94 59.5 Q96 64 99.5 62.5" fill="none" stroke={c.ink} strokeWidth="1.6" strokeLinecap="round" />
                 ) : (
-                  <path d="M53 59 Q60 71 67 59 Z" fill="#b3414f" stroke={c.ink} strokeWidth="1.2" strokeLinejoin="round" />
+                  <path d="M88.5 61.5 Q94 71 99.5 61.5 Z" fill="#b3414f" stroke={c.ink} strokeWidth="1.2" strokeLinejoin="round" />
                 )}
-                <ellipse className="cat-yawn" cx="60" cy="63" rx="5" ry="6" fill="#b3414f" />
-                <ellipse className="cat-paw" cx="46" cy="64" rx="6" ry="8" fill={c.light} stroke={c.ink} strokeWidth="1" />
+                <ellipse className="cat-yawn" cx="94" cy="65" rx="4.5" ry="5.5" fill="#b3414f" />
+                <ellipse className="cat-paw" cx="80" cy="64" rx="5" ry="7" fill={c.light} stroke={c.ink} strokeWidth="1" />
 
                 <g className="cat-brows" stroke={c.ink} strokeWidth="2.2" strokeLinecap="round">
-                  <line x1="41" y1="35" x2="54" y2="39" />
-                  <line x1="79" y1="35" x2="66" y2="39" />
+                  <line x1="79" y1="43" x2="89" y2="46" />
+                  <line x1="109" y1="43" x2="99" y2="46" />
                 </g>
-                <g stroke={c.ink} strokeWidth="1.2" strokeLinecap="round">
-                  <line x1="38" y1="54" x2="22" y2="52" />
-                  <line x1="38" y1="58" x2="22" y2="60" />
-                  <line x1="82" y1="54" x2="98" y2="52" />
-                  <line x1="82" y1="58" x2="98" y2="60" />
+                <g stroke={c.ink} strokeWidth="1.1" strokeLinecap="round">
+                  <line x1="77" y1="58" x2="64" y2="56" />
+                  <line x1="77" y1="62" x2="64" y2="64" />
+                  <line x1="111" y1="58" x2="124" y2="56" />
+                  <line x1="111" y1="62" x2="124" y2="64" />
                 </g>
 
                 {headItem === "witch" && (
-                  <g transform="rotate(-8 60 22)">
+                  <g transform="translate(34 12) rotate(-8 60 22)">
                     <polygon points="45,22 61,-14 75,22" fill="#5b21b6" />
                     <polygon points="46.3,19 73.8,19 71.9,14 48.6,14" fill="#f59e0b" />
                     <ellipse cx="60" cy="22" rx="22" ry="5" fill="#4c1d95" />
                   </g>
                 )}
                 {headItem === "santa" && (
-                  <g transform="rotate(-6 60 22)">
+                  <g transform="translate(34 12) rotate(-6 60 22)">
                     <path d="M45 20 Q47 -6 72 -4 Q64 6 76 20 Z" fill="#dc2626" />
                     <rect x="42" y="16" width="38" height="8" rx="4" fill="#ffffff" />
                     <circle cx="72" cy="-4" r="5" fill="#ffffff" />
                   </g>
                 )}
                 {headItem === "crown" && (
-                  <g>
+                  <g transform="translate(34 12)">
                     <path d="M44 24 L46 8 L53 16 L60 4 L67 16 L74 8 L76 24 Z" fill="#fbbf24" stroke="#d97706" strokeWidth="1.2" strokeLinejoin="round" />
                     <circle cx="60" cy="14" r="2" fill="#ef4444" />
                     <circle cx="50" cy="19" r="1.5" fill="#3b82f6" />
@@ -974,7 +1007,7 @@ function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday
                   </g>
                 )}
                 {headItem === "nightcap" && (
-                  <g>
+                  <g transform="translate(34 12)">
                     <path d="M42 24 Q50 -4 74 8 Q90 16 88 34 Q74 18 42 24 Z" fill="#6366f1" />
                     <rect x="40" y="20" width="30" height="7" rx="3.5" fill="#e0e7ff" transform="rotate(-8 55 23)" />
                     <circle cx="88" cy="34" r="5" fill="#ffffff" />
@@ -982,8 +1015,8 @@ function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday
                 )}
               </g>
 
-              <text className="cat-zzz" x="88" y="22" fontSize="14" fill="#8b93a7">Zzz</text>
-              <text className="cat-heart" x="56" y="16" fontSize="16" fill="#ef5b7b">♥</text>
+              <text className="cat-zzz" x="104" y="24" fontSize="14" fill="#8b93a7">Zzz</text>
+              <text className="cat-heart" x="88" y="22" fontSize="16" fill="#ef5b7b">♥</text>
             </svg>
           </button>
         </div>
