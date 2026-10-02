@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import PomodoroTimer, {
+  usePomodoro,
+  POMODORO_STORAGE_KEY,
+} from "./PomodoroTimer";
 import "./index.css";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -275,13 +279,25 @@ function App() {
     }
   });
 
-  const [focusSeconds, setFocusSeconds] = useState(25 * 60);
-  const [focusRunning, setFocusRunning] = useState(false);
-  const [focusSubject, setFocusSubject] = useState("");
-  const [focusMode, setFocusMode] = useState("focus");
+  // Called by the Pomodoro timer whenever a focus session ends
+  function logFocusSession({ subject, minutes }) {
+    setStudySessions((sessions) => [
+      ...sessions,
+      {
+        id: Date.now(),
+        date: getLocalDateKey(),
+        subject: subject || "General Study",
+        duration: minutes,
+        type: "focus",
+      },
+    ]);
+  }
 
-  const FOCUS_DURATION = 25 * 60;
-  const BREAK_DURATION = 5 * 60;
+  // Lives in App so the timer keeps running while you change pages
+  const pomodoro = usePomodoro({
+    subjects,
+    onSessionComplete: logFocusSession,
+  });
 
   useEffect(() => {
     localStorage.setItem("studytrack-subjects", JSON.stringify(subjects));
@@ -303,40 +319,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem("studytrack-sessions", JSON.stringify(studySessions));
   }, [studySessions]);
-
-  useEffect(() => {
-    if (!focusRunning) return undefined;
-
-    const timer = setInterval(() => {
-      setFocusSeconds((prev) => {
-        if (prev <= 1) {
-          setFocusRunning(false);
-
-          if (focusMode === "focus") {
-            setStudySessions((sessions) => [
-              ...sessions,
-              {
-                id: Date.now(),
-                date: getLocalDateKey(),
-                subject: focusSubject || "General Study",
-                duration: 25,
-                type: "focus",
-              },
-            ]);
-            setFocusMode("break");
-            return BREAK_DURATION;
-          }
-
-          setFocusMode("focus");
-          return FOCUS_DURATION;
-        }
-
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [focusRunning, focusMode, focusSubject]);
 
   // =========================================================
   // ATTENDANCE
@@ -726,6 +708,14 @@ function App() {
     [studySessions, todayKey]
   );
 
+  const sessionsToday = useMemo(
+    () =>
+      studySessions.filter(
+        (session) => session.date === todayKey && session.type === "focus"
+      ).length,
+    [studySessions, todayKey]
+  );
+
   const totalStudyMinutes = useMemo(
     () =>
       studySessions.reduce(
@@ -736,9 +726,10 @@ function App() {
   );
 
   const weeklyStudyMinutes = useMemo(() => {
-    const today = new Date();
-    const weekStart = new Date(today);
-    weekStart.setDate(today.getDate() - 6);
+    // Start of the day 6 days ago, so "last 7 days" includes whole days
+    const weekStart = new Date();
+    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setDate(weekStart.getDate() - 6);
 
     return studySessions
       .filter((session) => {
@@ -752,6 +743,11 @@ function App() {
     const dates = new Set(studySessions.map((session) => session.date));
     let streak = 0;
     const current = new Date();
+
+    // Haven't studied yet today? The streak is still alive from yesterday.
+    if (!dates.has(getLocalDateKey(current))) {
+      current.setDate(current.getDate() - 1);
+    }
 
     while (dates.has(getLocalDateKey(current))) {
       streak++;
@@ -780,56 +776,6 @@ function App() {
     1
   );
 
-  function resetFocusTimer() {
-    setFocusRunning(false);
-    setFocusMode("focus");
-    setFocusSeconds(FOCUS_DURATION);
-  }
-
-  function startFocusTimer() {
-    setFocusRunning(true);
-  }
-
-  function pauseFocusTimer() {
-    setFocusRunning(false);
-  }
-
-  function finishFocusSession() {
-    const elapsedSeconds = FOCUS_DURATION - focusSeconds;
-
-    if (focusMode === "break") {
-      resetFocusTimer();
-      return;
-    }
-
-    if (elapsedSeconds < 60) {
-      alert("Study for at least 1 minute before finishing the session.");
-      return;
-    }
-
-    const duration = Math.max(1, Math.round(elapsedSeconds / 60));
-
-    setStudySessions((sessions) => [
-      ...sessions,
-      {
-        id: Date.now(),
-        date: getLocalDateKey(),
-        subject: focusSubject || "General Study",
-        duration,
-        type: "focus",
-      },
-    ]);
-
-    resetFocusTimer();
-  }
-
-  function startBreak() {
-    setFocusRunning(false);
-    setFocusMode("break");
-    setFocusSeconds(BREAK_DURATION);
-    setFocusRunning(true);
-  }
-
   function clearStudyHistory() {
     if (!studySessions.length) return;
 
@@ -839,7 +785,6 @@ function App() {
 
     if (confirmed) {
       setStudySessions([]);
-      resetFocusTimer();
     }
   }
 
@@ -887,73 +832,11 @@ function App() {
         </div>
 
         <div className="productivity-grid">
-          <section className="focus-card">
-            <div className="focus-header">
-              <div>
-                <h2>Focus Mode</h2>
-                <p>25 minutes of focused study. Your completed sessions are logged automatically.</p>
-              </div>
-              <span>{focusRunning ? "🟢 Active" : "Ready"}</span>
-            </div>
-
-            <div className="focus-timer">
-              <div className="focus-time">
-                {String(Math.floor(focusSeconds / 60)).padStart(2, "0")}:
-                {String(focusSeconds % 60).padStart(2, "0")}
-              </div>
-            </div>
-
-            <div className="focus-mode">
-              {focusMode === "focus"
-                ? "25 minute focus session"
-                : "5 minute break"}
-            </div>
-
-            <div className="focus-subject">
-              <select
-                value={focusSubject}
-                onChange={(e) => setFocusSubject(e.target.value)}
-                disabled={focusRunning}
-              >
-                <option value="">General Study</option>
-                {subjects.map((subject) => (
-                  <option key={subject.id} value={subject.name}>
-                    {subject.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="focus-controls">
-              {!focusRunning ? (
-                <button className="primary-button" onClick={startFocusTimer}>
-                  ▶ Start
-                </button>
-              ) : (
-                <button className="secondary-button" onClick={pauseFocusTimer}>
-                  ⏸ Pause
-                </button>
-              )}
-
-              <button
-                className="secondary-button"
-                onClick={finishFocusSession}
-                disabled={
-                  !focusRunning && focusSeconds === FOCUS_DURATION
-                }
-              >
-                ✓ Finish
-              </button>
-
-              <button className="secondary-button" onClick={resetFocusTimer}>
-                ↻ Reset
-              </button>
-
-              <button className="secondary-button" onClick={startBreak}>
-                ☕ Break
-              </button>
-            </div>
-          </section>
+          <PomodoroTimer
+            pomodoro={pomodoro}
+            subjects={subjects}
+            sessionsToday={sessionsToday}
+          />
 
           <div className="productivity-side">
             <div className="productivity-mini-card">
@@ -1023,7 +906,7 @@ function App() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))",
+            gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))",
             gap: "20px",
             marginTop: "20px",
           }}
@@ -1224,17 +1107,18 @@ function App() {
                 <div className="benchmark-box">
                   <label>
                     Benchmark
-                    <input
-                      className="benchmark-input"
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={subject.benchmark}
-                      onChange={(e) =>
-                        updateBenchmark(subject.id, e.target.value)
-                      }
-                    />
-                    %
+                    <div className="benchmark-input">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={subject.benchmark}
+                        onChange={(e) =>
+                          updateBenchmark(subject.id, e.target.value)
+                        }
+                      />
+                      <span>%</span>
+                    </div>
                   </label>
                 </div>
 
@@ -1497,12 +1381,6 @@ function App() {
 
   function Timetable() {
     const totalClasses = timetable.length;
-    const cardStyle = {
-      background: "rgba(255,255,255,0.04)",
-      border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: "16px",
-      padding: "16px",
-    };
 
     const setField = (key) => (e) =>
       setTimetableForm((prev) => ({ ...prev, [key]: e.target.value }));
@@ -1522,7 +1400,7 @@ function App() {
           </button>
         </div>
 
-        <div className="stats-grid">
+        <div className="stats-grid cols-3">
           <div className="stat-card">
             <span>Weekly Classes</span>
             <strong>{totalClasses}</strong>
@@ -1542,7 +1420,7 @@ function App() {
         </div>
 
         {showTimetableForm && (
-          <div className="panel" style={{ marginBottom: "24px" }}>
+          <div className="panel timetable-form">
             <div className="panel-header">
               <div>
                 <h2>{editingTimetableId ? "Edit Class" : "Add Class"}</h2>
@@ -1559,13 +1437,7 @@ function App() {
               </button>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                gap: "14px",
-              }}
-            >
+            <div className="form-grid">
               <label>
                 Day
                 <select value={timetableForm.day} onChange={setField("day")}>
@@ -1631,11 +1503,7 @@ function App() {
               </label>
             </div>
 
-            <button
-              className="primary-button"
-              style={{ marginTop: "18px" }}
-              onClick={saveTimetableEntry}
-            >
+            <button className="primary-button" onClick={saveTimetableEntry}>
               {editingTimetableId ? "Save Changes" : "Add Class"}
             </button>
           </div>
@@ -1656,22 +1524,12 @@ function App() {
             </button>
           </div>
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-              gap: "16px",
-            }}
-          >
+          <div className="timetable-grid">
             {DAYS.map((day) => {
               const entries = getDayEntries(day);
 
               return (
-                <section
-                  key={day}
-                  className="panel"
-                  style={{ margin: 0 }}
-                >
+                <section key={day} className="panel">
                   <div className="panel-header">
                     <h2>{day}</h2>
                     <span>
@@ -1681,49 +1539,24 @@ function App() {
                   </div>
 
                   {entries.length === 0 ? (
-                    <div style={{ opacity: 0.55, padding: "14px 0" }}>
-                      No classes
-                    </div>
+                    <div className="timetable-empty">No classes</div>
                   ) : (
-                    <div style={{ display: "grid", gap: "12px" }}>
+                    <div className="timetable-list">
                       {entries.map((entry) => (
-                        <div
-                          key={entry.id}
-                          className="class-item"
-                          style={cardStyle}
-                        >
-                          <div
-                            style={{
-                              fontWeight: 700,
-                              fontSize: "16px",
-                            }}
-                          >
+                        <div key={entry.id} className="timetable-class">
+                          <strong className="timetable-class-name">
                             {entry.subject}
+                          </strong>
+
+                          <div className="timetable-class-meta">
+                            <span>
+                              🕐 {entry.startTime} – {entry.endTime}
+                            </span>
+                            {entry.room && <span>📍 {entry.room}</span>}
+                            {entry.teacher && <span>👨‍🏫 {entry.teacher}</span>}
                           </div>
 
-                          <div style={{ marginTop: "7px", opacity: 0.85 }}>
-                            🕐 {entry.startTime} – {entry.endTime}
-                          </div>
-
-                          {entry.room && (
-                            <div style={{ marginTop: "5px", opacity: 0.75 }}>
-                              📍 {entry.room}
-                            </div>
-                          )}
-
-                          {entry.teacher && (
-                            <div style={{ marginTop: "5px", opacity: 0.75 }}>
-                              👨‍🏫 {entry.teacher}
-                            </div>
-                          )}
-
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: "8px",
-                              marginTop: "12px",
-                            }}
-                          >
+                          <div className="timetable-class-actions">
                             <button
                               className="secondary-button"
                               onClick={() => openTimetableForm(entry)}
@@ -1768,6 +1601,7 @@ function App() {
       timetable,
       settings,
       studySessions,
+      pomodoro: pomodoro.settings,
     };
 
     const blob = new Blob([JSON.stringify(backup, null, 2)], {
@@ -1814,8 +1648,8 @@ function App() {
         setStudySessions(
           Array.isArray(backup.studySessions) ? backup.studySessions : []
         );
+        pomodoro.applySettings(backup.pomodoro);
         setPage("dashboard");
-        resetFocusTimer();
 
         alert("Backup imported successfully!");
       } catch (error) {
@@ -1842,14 +1676,15 @@ function App() {
     setSettings(DEFAULT_SETTINGS);
     setStudySessions([]);
     setNewBenchmark(75);
+    pomodoro.resetAll();
     setPage("dashboard");
-    resetFocusTimer();
 
     localStorage.removeItem("studytrack-subjects");
     localStorage.removeItem("studytrack-full-syllabus");
     localStorage.removeItem("studytrack-timetable");
     localStorage.removeItem("studytrack-settings");
     localStorage.removeItem("studytrack-sessions");
+    localStorage.removeItem(POMODORO_STORAGE_KEY);
 
     alert("StudyTrack has been reset.");
   }
@@ -1907,7 +1742,7 @@ function App() {
               style={{
                 display: "grid",
                 gridTemplateColumns:
-                  "repeat(auto-fit, minmax(220px, 1fr))",
+                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
                 gap: "16px",
               }}
             >
@@ -2112,6 +1947,7 @@ function App() {
     const row = {
       display: "flex",
       justifyContent: "space-between",
+      gap: "12px",
       marginBottom: "7px",
     };
 
@@ -2146,7 +1982,7 @@ function App() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
+            gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,300px),1fr))",
             gap: "20px",
             marginTop: "20px",
           }}
@@ -2419,7 +2255,7 @@ function App() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(6,minmax(45px,1fr))",
+                gridTemplateColumns: "repeat(6,minmax(0,1fr))",
                 gap: "14px",
                 alignItems: "end",
                 minHeight: "190px",
@@ -2529,7 +2365,7 @@ function App() {
         <div className="logo">
           <div className="logo-icon">S</div>
           <div>
-            <strong>StudyTrack</strong>
+            <h2>StudyTrack</h2>
             <span>Student Dashboard</span>
           </div>
         </div>
@@ -2547,7 +2383,7 @@ function App() {
         </nav>
       </aside>
 
-      <main>
+      <main className="main">
         <button
           className="mobile-menu-button"
           aria-label="Open navigation"
