@@ -212,6 +212,7 @@ function parseWholeSyllabus(rawText) {
 
 function App() {
   const [page, setPage] = useState("dashboard");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [subjects, setSubjects] = useState(() => {
     const saved = localStorage.getItem("studytrack-subjects");
@@ -1509,8 +1510,7 @@ function App() {
               </select>
             </label>
             <p style={{ marginTop: "10px", fontSize: "13px", opacity: 0.65 }}>
-              Your current app styling remains unchanged; this preference is
-              saved for future theme styling.
+              The theme updates immediately and is remembered on this device.
             </p>
           </div>
 
@@ -1869,7 +1869,7 @@ function App() {
                         item.count ? (item.count / maxDaily) * 120 : 4,
                         4
                       )}px`,
-                      background: "#8b5cf6",
+                      background: "#22d3ee",
                       borderRadius: "10px 10px 4px 4px",
                       transition: "height .4s ease",
                     }}
@@ -1890,6 +1890,12 @@ function App() {
   // APP SHELL
   // =========================================================
 
+  function navigateTo(nextPage) {
+    setPage(nextPage);
+    setMobileNavOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   const NAV = [
     ["dashboard", "🏠 Dashboard"],
     ["attendance", "📊 Attendance"],
@@ -1900,7 +1906,15 @@ function App() {
   ];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${mobileNavOpen ? "nav-open" : ""}`}>
+      {mobileNavOpen && (
+        <button
+          className="sidebar-overlay"
+          aria-label="Close navigation"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
       <aside className="sidebar">
         <div className="logo">
           <div className="logo-icon">S</div>
@@ -1916,7 +1930,7 @@ function App() {
             <button
               key={key}
               className={page === key ? "active" : ""}
-              onClick={() => setPage(key)}
+              onClick={() => navigateTo(key)}
             >
               {label}
             </button>
@@ -1925,12 +1939,23 @@ function App() {
       </aside>
 
       <main>
-        {page === "dashboard" && Dashboard()}
-        {page === "attendance" && Attendance()}
-        {page === "syllabus" && Syllabus()}
-        {page === "timetable" && Timetable()}
-        {page === "statistics" && Statistics()}
-        {page === "settings" && Settings()}
+        <button
+          className="mobile-menu-button"
+          aria-label="Open navigation"
+          aria-expanded={mobileNavOpen}
+          onClick={() => setMobileNavOpen(true)}
+        >
+          <span></span><span></span><span></span>
+        </button>
+
+        <div key={page} className="page-transition">
+          {page === "dashboard" && Dashboard()}
+          {page === "attendance" && Attendance()}
+          {page === "syllabus" && Syllabus()}
+          {page === "timetable" && Timetable()}
+          {page === "statistics" && Statistics()}
+          {page === "settings" && Settings()}
+        </div>
       </main>
     </div>
   );
