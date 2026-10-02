@@ -44,6 +44,7 @@ export const PET_STORAGE_KEY = "studytrack-pet";
 const PET_EVENT = "studytrack-pet-change";
 const PET_DEFAULTS = {
   show: true,
+  penguin: true,
   walk: true,
   bubbles: true,
   outfits: true,
@@ -1025,6 +1026,194 @@ function PetCat({ state, mood, paused, busy, phase, round, rounds, sessionsToday
   );
 }
 
+/* ================================================================
+   Pet penguin — waddles along the top of the Focus card next to the
+   cat. Naps while you focus, flaps on breaks, hops when you click it.
+   Uses the same "walk" and "speech bubbles" settings as the cat.
+================================================================ */
+
+const PENGUIN_LINES = [
+  "Waddle waddle! 🐧",
+  "Stay cool, keep studying ❄️",
+  "Fish break later? 🐟",
+  "You're doing great!",
+  "Pip believes in you 💙",
+];
+const PENGUIN_NAP = ["Zzz… 😴", "Shh… focus time 🤫"];
+const PENGUIN_BREAK = ["Slide time! 🧊", "Break! Go grab a fish 🐟"];
+
+function PetPenguin({ state, walk, bubbles }) {
+  const [pos, setPos] = useState({ left: null, ms: 0 });
+  const [walking, setWalking] = useState(false);
+  const [hop, setHop] = useState(false);
+  const [bubble, setBubble] = useState(null);
+
+  const trackRef = useRef(null);
+  const penRef = useRef(null);
+  const bubbleTimer = useRef(0);
+  const hopTimer = useRef(0);
+  const lastLine = useRef("");
+  const prevState = useRef(state);
+  const bubblesRef = useRef(bubbles);
+  bubblesRef.current = bubbles;
+
+  const sleeping = state === "focus" || state === "wake";
+
+  const maxLeft = () => {
+    const track = trackRef.current;
+    const pen = penRef.current;
+    return track && pen ? Math.max(0, track.clientWidth - pen.offsetWidth) : 0;
+  };
+  const curLeft = () => {
+    const track = trackRef.current;
+    const pen = penRef.current;
+    return track && pen ? pen.getBoundingClientRect().left - track.getBoundingClientRect().left : 0;
+  };
+
+  const say = useCallback((text, ms = 3800) => {
+    if (!bubblesRef.current) return;
+    clearTimeout(bubbleTimer.current);
+    setBubble({ text, id: Date.now(), ms });
+    bubbleTimer.current = setTimeout(() => setBubble(null), ms);
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearTimeout(bubbleTimer.current);
+      clearTimeout(hopTimer.current);
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!bubbles) {
+      clearTimeout(bubbleTimer.current);
+      setBubble(null);
+    }
+  }, [bubbles]);
+
+  /* keep inside the card when the window is resized */
+  useEffect(() => {
+    const onResize = () => {
+      setPos((p) => ({ left: Math.min(p.left ?? 0, maxLeft()), ms: 0 }));
+      setWalking(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  /* react when the timer changes */
+  useEffect(() => {
+    const prev = prevState.current;
+    prevState.current = state;
+    if (prev === state) return;
+    if (sleeping) say(pickLine(PENGUIN_NAP, lastLine), 3000);
+    else if (state === "break") say(pickLine(PENGUIN_BREAK, lastLine), 3500);
+  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* waddle slowly along the card edge; stay put while napping */
+  useEffect(() => {
+    if (!walk || sleeping) {
+      setPos((p) => (p.left == null ? p : { left: curLeft(), ms: 0 }));
+      setWalking(false);
+      return undefined;
+    }
+    if (reducedMotion()) return undefined;
+
+    let timer;
+    const loop = () => {
+      timer = setTimeout(() => {
+        const max = maxLeft();
+        if (max < 60) {
+          loop();
+          return;
+        }
+        const from = curLeft();
+        let to = Math.random() * max;
+        if (Math.abs(to - from) < 80) {
+          to = from < max / 2 ? Math.min(max, from + 120) : Math.max(0, from - 120);
+        }
+        const ms = Math.abs(to - from) / 0.03; // px per ms
+        setWalking(true);
+        setPos({ left: to, ms });
+        timer = setTimeout(loop, ms);
+      }, rand(2500, 6500));
+    };
+    loop();
+    return () => clearTimeout(timer);
+  }, [walk, sleeping]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function poke() {
+    setHop(true);
+    clearTimeout(hopTimer.current);
+    hopTimer.current = setTimeout(() => setHop(false), 900);
+    say(pickLine(sleeping ? PENGUIN_NAP : PENGUIN_LINES, lastLine), 3200);
+  }
+
+  const cls = ["pet-penguin", walking && "walking", hop && "hop"].filter(Boolean).join(" ");
+
+  return (
+    <div className="penguin-track" ref={trackRef}>
+      <div
+        ref={penRef}
+        className={cls}
+        data-state={state}
+        style={pos.left == null ? undefined : { left: pos.left, transitionDuration: `${pos.ms}ms` }}
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && e.propertyName === "left") setWalking(false);
+        }}
+      >
+        {bubble && (
+          <div
+            className="cat-bubble"
+            key={bubble.id}
+            aria-hidden="true"
+            style={{ animationDuration: `${bubble.ms}ms` }}
+          >
+            {bubble.text}
+          </div>
+        )}
+
+        <button type="button" className="peng-body" onClick={poke} aria-label="Say hi to Pip" title="Say hi to Pip!">
+          <svg viewBox="0 0 64 82" aria-hidden="true">
+            {/* feet */}
+            <ellipse cx="22" cy="78" rx="9" ry="3.6" fill="#f59e0b" />
+            <ellipse cx="42" cy="78" rx="9" ry="3.6" fill="#f59e0b" />
+
+            {/* flippers */}
+            <path className="peng-flip peng-flip-l" d="M12 38 Q-1 52 8 63 Q17 55 17 42 Z" fill="#1f2937" />
+            <path className="peng-flip peng-flip-r" d="M52 38 Q65 52 56 63 Q47 55 47 42 Z" fill="#1f2937" />
+
+            {/* body + head */}
+            <ellipse cx="32" cy="44" rx="23" ry="33" fill="#1f2937" />
+            <ellipse cx="32" cy="55" rx="15" ry="21" fill="#f8fafc" />
+            <ellipse cx="32" cy="28" rx="15" ry="13" fill="#f8fafc" />
+
+            {/* eyes */}
+            <g className="peng-eyes">
+              <circle cx="25.5" cy="26" r="3.4" fill="#111827" />
+              <circle cx="38.5" cy="26" r="3.4" fill="#111827" />
+              <circle cx="26.6" cy="24.9" r="1.1" fill="#fff" />
+              <circle cx="39.6" cy="24.9" r="1.1" fill="#fff" />
+            </g>
+            <ellipse cx="20.5" cy="33" rx="3.2" ry="2" fill="#f9a8b4" opacity=".7" />
+            <ellipse cx="43.5" cy="33" rx="3.2" ry="2" fill="#f9a8b4" opacity=".7" />
+
+            {/* beak */}
+            <path d="M27 31 Q32 28 37 31 L32 38.5 Z" fill="#f59e0b" />
+
+            {/* scarf */}
+            <path d="M14 44 Q32 54 50 44 L50 51 Q32 61 14 51 Z" fill="#38bdf8" />
+            <path d="M41 54 L47 68 L40 69 L36 57 Z" fill="#0ea5e9" />
+
+            <text className="peng-zzz" x="46" y="12" fontSize="12" fill="#8b93a7">Zzz</text>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function PomodoroTimer({ pomodoro: p, subjects = [], sessionsToday = 0 }) {
   const { settings, phase, remaining, running, round, locked } = p;
   const paused = locked && !running;
@@ -1068,6 +1257,7 @@ export default function PomodoroTimer({ pomodoro: p, subjects = [], sessionsToda
           event={p.petEvent}
         />
       )}
+      {pet.penguin && <PetPenguin state={catState} walk={pet.walk} bubbles={pet.bubbles} />}
 
       <header className="focus-header">
         <div>
@@ -1215,12 +1405,16 @@ export default function PomodoroTimer({ pomodoro: p, subjects = [], sessionsToda
         {locked && <p className="pomo-note">Reset the timer to change durations.</p>}
 
         <div className="pomo-pet">
-          <h3>Pet cat</h3>
+          <h3>Pets</h3>
 
           <div className="pomo-toggles">
             <label className="pomo-toggle">
               <input type="checkbox" checked={pet.show} onChange={(e) => changePet({ show: e.target.checked })} />
               <span>Show the cat</span>
+            </label>
+            <label className="pomo-toggle">
+              <input type="checkbox" checked={pet.penguin} onChange={(e) => changePet({ penguin: e.target.checked })} />
+              <span>Show the penguin</span>
             </label>
             <label className="pomo-toggle">
               <input type="checkbox" checked={pet.walk} onChange={(e) => changePet({ walk: e.target.checked })} />

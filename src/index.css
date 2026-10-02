@@ -2401,3 +2401,84 @@ body {
 }
 .pomo-coat:hover { background: var(--coat); border-color: var(--accent); }
 .pomo-coat.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ---------- Pet penguin (waddles along the top edge of the Focus card) ---------- */
+.penguin-track {
+  --peng-w: 62px;
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: calc(100% - 7px);
+  height: 0;
+  z-index: 4;
+  pointer-events: none; /* only the penguin itself is clickable */
+}
+
+.pet-penguin {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: var(--peng-w);
+  pointer-events: auto;
+  transition-property: left;
+  transition-timing-function: ease-in-out;
+  transition-duration: 0ms;
+}
+
+.peng-body {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform-origin: bottom center;
+  animation: peng-breathe 3.4s ease-in-out infinite;
+}
+.peng-body:hover,
+.peng-body:active { background: none; box-shadow: none; transform: none; }
+.peng-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 12px; }
+.peng-body svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.pet-penguin .peng-flip { transform-box: fill-box; transform-origin: 50% 0; }
+.pet-penguin .peng-eyes { transform-box: fill-box; transform-origin: center; animation: peng-blink 4.6s infinite; }
+.pet-penguin .peng-zzz { opacity: 0; }
+
+@keyframes peng-breathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.025); } }
+@keyframes peng-blink   { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+@keyframes peng-waddle  { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+@keyframes peng-hop     { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
+@keyframes peng-flap-l  { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(24deg); } }
+@keyframes peng-flap-r  { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-24deg); } }
+@keyframes peng-zzz     { 0% { opacity: 0; transform: translateY(6px); } 50% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px); } }
+
+/* walking: rock side to side and swing the flippers */
+.pet-penguin.walking .peng-body { animation: peng-waddle .5s ease-in-out infinite; }
+.pet-penguin.walking .peng-flip-l { animation: peng-flap-l .5s ease-in-out infinite; }
+.pet-penguin.walking .peng-flip-r { animation: peng-flap-r .5s ease-in-out infinite; }
+
+/* focusing: naps */
+.pet-penguin[data-state="focus"] .peng-eyes,
+.pet-penguin[data-state="wake"] .peng-eyes { animation: none; transform: scaleY(.12); }
+.pet-penguin[data-state="focus"] .peng-zzz,
+.pet-penguin[data-state="wake"] .peng-zzz { animation: peng-zzz 2.6s ease-in-out infinite; }
+
+/* break: happy flapping */
+.pet-penguin[data-state="break"] .peng-flip-l { animation: peng-flap-l .6s ease-in-out infinite; }
+.pet-penguin[data-state="break"] .peng-flip-r { animation: peng-flap-r .6s ease-in-out infinite; }
+
+/* clicked */
+.pet-penguin.hop .peng-body { animation: peng-hop .45s ease-in-out 2; }
+
+@media (max-width: 650px) {
+  .penguin-track { --peng-w: 50px; left: 16px; right: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-penguin, .pet-penguin * { animation: none !important; transition: none !important; }
+}
